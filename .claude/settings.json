@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(pip freeze *)",
+      "Bash(python *)",
+      "Bash(streamlit *)",
+      "Bash(git *)",
+      "Read(**)",
+      "Write(**)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(sudo *)"
+    ]
+  },
+  "model": "sonnet",
+  "env": {
+    "MAX_THINKING_TOKENS": "10000"
+  }
+}
