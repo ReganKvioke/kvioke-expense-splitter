@@ -3,8 +3,11 @@
 
 def compute_net_balances(data: dict) -> dict[int, float]:
     """
-    net[user_id] = paid - owed - sent + received
+    net[user_id] = paid - owed + sent - received
     Positive = others owe them; Negative = they owe others.
+
+    sent:     settlements FROM this user (they paid someone back → reduces their debt → +)
+    received: settlements TO this user (they got paid back → reduces their credit → -)
     """
     user_ids = set(data["users"].keys())
     # also include anyone in paid/owed/sent/received that might not be in users yet

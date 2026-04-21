@@ -101,8 +101,8 @@ def _build_summary(data: dict, users_by_id: dict | None = None) -> str:
         f"Split: {'Custom' if method == 'discrete' else 'Equal'}",
     ]
 
-    if splits and method == "discrete" and users_by_id:
-        lines.append("Shares:")
+    if splits and users_by_id:
+        lines.append("Shares:" if method == "discrete" else "Split equally among:")
         for uid, amt in splits:
             lines.append(f"  • {users_by_id.get(uid, str(uid))}: {fmt_sgd(amt)}")
 
@@ -297,7 +297,8 @@ async def handle_split_method(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         context.user_data[KEY_CUSTOM_SPLITS] = splits
 
-        summary = _build_summary(context.user_data)
+        users_by_id = {u["id"]: u["display_name"] for u in group_users}
+        summary = _build_summary(context.user_data, users_by_id)
         await query.edit_message_text(
             f"{summary}\n\nConfirm?",
             reply_markup=_confirm_keyboard(),

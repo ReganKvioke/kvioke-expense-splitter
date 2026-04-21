@@ -15,7 +15,7 @@ from bot.db import queries
 from bot.db.database import run_in_executor
 from bot.middleware.auth import require_auth
 from bot.utils.constants import SUPPORTED_CURRENCIES, CONVERSATION_TIMEOUT
-from bot.utils.format import fmt_sgd, fmt_amount, fmt_datetime_compact, fmt_category, fmt_date
+from bot.utils.format import fmt_sgd, fmt_amount, fmt_datetime_local, fmt_category, fmt_date, tz_abbrev
 
 logger = logging.getLogger(__name__)
 
@@ -289,13 +289,15 @@ async def cmd_tripsummary(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     expenses = await run_in_executor(queries.get_expenses_for_trip, trip["id"])
 
+    currency = trip["default_currency"]
+    tz = tz_abbrev(currency)
     status = "🟢 Active" if trip["ended_at"] is None else f"🏁 Ended {fmt_date(trip['ended_at'])}"
     total_sgd = sum(e["amount_sgd"] for e in expenses)
 
     header = (
         f"📋 *{trip['name']}*\n"
         f"{status} · Started {fmt_date(trip['started_at'])}\n"
-        f"Default currency: {trip['default_currency']} · {fmt_sgd(total_sgd)} total\n"
+        f"Default currency: {currency} · {fmt_sgd(total_sgd)} total · {tz}\n"
     )
 
     if not expenses:
@@ -305,7 +307,7 @@ async def cmd_tripsummary(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     lines = [header]
     for e in expenses:
         lines.append(
-            f"• {fmt_datetime_compact(e['created_at'])} | {e['description']} | "
+            f"• {fmt_datetime_local(e['created_at'], currency)} | {e['description']} | "
             f"{fmt_amount(e['amount'], e['currency'])} | {e['paid_by_name']} | {fmt_category(e['category'])}"
         )
 

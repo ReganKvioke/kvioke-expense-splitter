@@ -516,6 +516,47 @@ def get_balance_data(group_chat_id: str, trip_id: Optional[int] = None) -> dict:
         conn.close()
 
 
+def get_settlements_for_trip(group_chat_id: str, trip_id: Optional[int] = None) -> list:
+    """Return all settlements for this group/trip with payer and recipient names."""
+    conn = get_connection()
+    try:
+        conditions = ["s.group_chat_id = ?"]
+        params: list = [str(group_chat_id)]
+        if trip_id is not None:
+            conditions.append("s.trip_id = ?")
+            params.append(trip_id)
+        where = " AND ".join(conditions)
+        rows = conn.execute(
+            f"SELECT s.id, s.amount_sgd, s.created_at, "
+            f"fu.display_name AS from_name, tu.display_name AS to_name "
+            f"FROM settlements s "
+            f"JOIN users fu ON fu.id = s.from_user_id "
+            f"JOIN users tu ON tu.id = s.to_user_id "
+            f"WHERE {where} ORDER BY s.created_at DESC",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def update_expense_field(expense_id: int, group_chat_id: str, field: str, value: str) -> bool:
+    """Update a single editable field on an expense. Only 'description' and 'category' are allowed."""
+    ALLOWED = {"description", "category"}
+    if field not in ALLOWED:
+        raise ValueError(f"Field {field!r} is not editable")
+    conn = get_connection()
+    try:
+        with conn:
+            cur = conn.execute(
+                f"UPDATE expenses SET {field} = ? WHERE id = ? AND group_chat_id = ?",
+                (value, expense_id, str(group_chat_id)),
+            )
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Trips
 # ---------------------------------------------------------------------------
@@ -630,6 +671,68 @@ def delete_trip(trip_id: int, group_chat_id: str) -> bool:
                 (trip_id, str(group_chat_id)),
             )
         return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def force_delete_trip(trip_id: int, group_chat_id: str) -> dict:
+    """Permanently delete a trip and ALL associated records.
+
+    Deletes (in order): expense_splits → expenses → settlements →
+    trip_participants → the trip row itself.
+
+    Returns a summary dict with counts of deleted rows.
+    """
+    conn = get_connection()
+    try:
+        with conn:
+            # Collect expense ids first so we can cascade to splits
+            expense_ids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT id FROM expenses WHERE trip_id = ? AND group_chat_id = ?",
+                    (trip_id, str(group_chat_id)),
+                ).fetchall()
+            ]
+
+            splits_deleted = 0
+            if expense_ids:
+                placeholders = ",".join("?" * len(expense_ids))
+                cur = conn.execute(
+                    f"DELETE FROM expense_splits WHERE expense_id IN ({placeholders})",
+                    expense_ids,
+                )
+                splits_deleted = cur.rowcount
+
+            cur = conn.execute(
+                "DELETE FROM expenses WHERE trip_id = ? AND group_chat_id = ?",
+                (trip_id, str(group_chat_id)),
+            )
+            expenses_deleted = cur.rowcount
+
+            cur = conn.execute(
+                "DELETE FROM settlements WHERE trip_id = ? AND group_chat_id = ?",
+                (trip_id, str(group_chat_id)),
+            )
+            settlements_deleted = cur.rowcount
+
+            conn.execute(
+                "DELETE FROM trip_participants WHERE trip_id = ?",
+                (trip_id,),
+            )
+
+            cur = conn.execute(
+                "DELETE FROM trips WHERE id = ? AND group_chat_id = ?",
+                (trip_id, str(group_chat_id)),
+            )
+            trip_deleted = cur.rowcount > 0
+
+        return {
+            "trip_deleted": trip_deleted,
+            "expenses": expenses_deleted,
+            "splits": splits_deleted,
+            "settlements": settlements_deleted,
+        }
     finally:
         conn.close()
 

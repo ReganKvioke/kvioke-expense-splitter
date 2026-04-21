@@ -14,7 +14,7 @@ from telegram.ext import (
 from bot.db import queries
 from bot.db.database import run_in_executor
 from bot.middleware.auth import require_auth
-from bot.utils.format import fmt_sgd, fmt_amount, fmt_datetime_compact, fmt_datetime, fmt_category
+from bot.utils.format import fmt_sgd, fmt_amount, fmt_datetime_local, fmt_datetime_full_local, fmt_category
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +22,10 @@ STATE_PICK, STATE_CONFIRM = range(2)
 PAGE_SIZE = 8
 
 
-def _expense_list_keyboard(expenses: list, page: int, total: int) -> InlineKeyboardMarkup:
+def _expense_list_keyboard(expenses: list, page: int, total: int, currency: str = "SGD") -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(
-            f"{fmt_datetime_compact(e['created_at'])} · {e['description'][:20]} · {fmt_amount(e['amount'], e['currency'])} · {e['paid_by_name']}",
+            f"{fmt_datetime_local(e['created_at'], currency)} · {e['description'][:20]} · {fmt_amount(e['amount'], e['currency'])} · {e['paid_by_name']}",
             callback_data=f"del_pick:{e['id']}",
         )]
         for e in expenses
@@ -72,12 +72,13 @@ async def _show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, page: i
     context.user_data["del_page"] = page
 
     trip_name = context.user_data.get("del_trip_name", "")
+    currency = context.user_data.get("del_currency", "SGD")
     slice_ = all_expenses[page * PAGE_SIZE: (page + 1) * PAGE_SIZE]
     text = (
         f"🗑 *{trip_name}* — Select an expense to delete "
         f"({page * PAGE_SIZE + 1}–{page * PAGE_SIZE + len(slice_)} of {len(all_expenses)}):"
     )
-    keyboard = _expense_list_keyboard(slice_, page, len(all_expenses))
+    keyboard = _expense_list_keyboard(slice_, page, len(all_expenses), currency)
 
     if edit:
         await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
@@ -96,9 +97,11 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if active_trip:
         context.user_data["del_trip_id"] = active_trip["id"]
         context.user_data["del_trip_name"] = active_trip["name"]
+        context.user_data["del_currency"] = active_trip["default_currency"]
     else:
         context.user_data["del_trip_id"] = None
         context.user_data["del_trip_name"] = "All expenses"
+        context.user_data["del_currency"] = "SGD"
     return await _show_list(update, context, page=0, edit=False)
 
 
@@ -124,9 +127,10 @@ async def handle_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     context.user_data["del_expense"] = expense
 
+    currency = context.user_data.get("del_currency", "SGD")
     text = (
         "⚠️ *Confirm deletion:*\n\n"
-        f"Date: {fmt_datetime(expense['created_at'])}\n"
+        f"Date: {fmt_datetime_full_local(expense['created_at'], currency)}\n"
         f"Description: {expense['description']}\n"
         f"Amount: {fmt_amount(expense['amount'], expense['currency'])} ({fmt_sgd(expense['amount_sgd'])})\n"
         f"Category: {fmt_category(expense['category'])}\n"

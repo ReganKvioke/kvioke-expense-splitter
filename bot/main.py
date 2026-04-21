@@ -13,9 +13,14 @@ from bot.commands.quickadd import cmd_quickadd
 from bot.commands.summary import cmd_summary
 from bot.commands.trips import build_tripstart_handler, cmd_tripend, cmd_tripsummary
 from bot.commands.tripdelete import build_tripdelete_handler
+from bot.commands.tripdeleteforce import build_tripdeleteforce_handler
 from bot.commands.orphans import build_orphans_handler
 from bot.commands.guestdelete import build_guestdelete_handler
-from bot.commands.settle import cmd_settle
+from bot.commands.settle import build_settle_handler
+from bot.commands.undo import build_undo_handler
+from bot.commands.edit import build_edit_handler
+from bot.commands.settlements import cmd_settlements
+from bot.commands.exporthtml import cmd_exporthtml
 from bot.commands.help import cmd_help
 from bot.middleware.auth import cmd_start, cmd_revoke, cmd_users
 
@@ -51,11 +56,16 @@ def main() -> None:
     app.add_handler(CommandHandler("quickadd", cmd_quickadd))
     app.add_handler(CommandHandler("balances", cmd_balances))
     app.add_handler(CommandHandler("summary", cmd_summary))
-    app.add_handler(CommandHandler("settle", cmd_settle))
+    app.add_handler(build_settle_handler())
+    app.add_handler(build_undo_handler())
+    app.add_handler(build_edit_handler())
+    app.add_handler(CommandHandler("settlements", cmd_settlements))
+    app.add_handler(CommandHandler("exporthtml", cmd_exporthtml))
     app.add_handler(build_tripstart_handler())
     app.add_handler(CommandHandler("tripend", cmd_tripend))
     app.add_handler(CommandHandler("tripsummary", cmd_tripsummary))
     app.add_handler(build_tripdelete_handler())
+    app.add_handler(build_tripdeleteforce_handler())
     app.add_handler(build_orphans_handler())
     app.add_handler(build_guestdelete_handler())
     app.add_handler(CommandHandler("help", cmd_help))

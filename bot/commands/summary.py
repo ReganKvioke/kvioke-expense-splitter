@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 from bot.db import queries
 from bot.db.database import run_in_executor
 from bot.middleware.auth import require_auth
-from bot.utils.format import fmt_sgd, fmt_amount, fmt_datetime_compact, fmt_category
+from bot.utils.format import fmt_sgd, fmt_amount, fmt_datetime_local, fmt_category, tz_abbrev
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +72,18 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             return
 
+        currency = active_trip["default_currency"]
+        tz = tz_abbrev(currency)
         total = sum(e["amount_sgd"] for e in expenses)
         label_map = {"today": "Today", "week": "Last 7 days", "month": "Last 30 days"}
-        lines = [f"📋 *{trip_name} · {label_map.get(arg, arg)} — {fmt_sgd(total)} total:*\n"]
+        lines = [f"📋 *{trip_name} · {label_map.get(arg, arg)} — {fmt_sgd(total)} total ({tz}):*\n"]
 
         for e in expenses:
+            amt = fmt_amount(e['amount'], e['currency'])
+            sgd_suffix = f" ({fmt_sgd(e['amount_sgd'])})" if e['currency'] != "SGD" else ""
             line = (
-                f"• {fmt_datetime_compact(e['created_at'])} | {e['description']} | "
-                f"{fmt_amount(e['amount'], e['currency'])} | paid by {e['paid_by_name']} | {fmt_category(e['category'])}"
+                f"• {fmt_datetime_local(e['created_at'], currency)} | {e['description']} | "
+                f"{amt}{sgd_suffix} | paid by {e['paid_by_name']} | {fmt_category(e['category'])}"
             )
             lines.append(line)
 
