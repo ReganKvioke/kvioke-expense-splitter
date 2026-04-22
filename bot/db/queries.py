@@ -115,6 +115,58 @@ def delete_guest_user(user_id: int) -> bool:
         conn.close()
 
 
+def merge_guest_user(guest_id: int, real_user_id: int) -> dict:
+    """Reassign all data from a guest user to a real user, then delete the guest.
+
+    Returns counts of rows updated in each table.
+    """
+    conn = get_connection()
+    try:
+        with conn:
+            cur = conn.execute(
+                "UPDATE expenses SET paid_by_user_id = ? WHERE paid_by_user_id = ?",
+                (real_user_id, guest_id),
+            )
+            expenses_updated = cur.rowcount
+
+            cur = conn.execute(
+                "UPDATE expense_splits SET user_id = ? WHERE user_id = ?",
+                (real_user_id, guest_id),
+            )
+            splits_updated = cur.rowcount
+
+            cur = conn.execute(
+                "UPDATE settlements SET from_user_id = ? WHERE from_user_id = ?",
+                (real_user_id, guest_id),
+            )
+            cur2 = conn.execute(
+                "UPDATE settlements SET to_user_id = ? WHERE to_user_id = ?",
+                (real_user_id, guest_id),
+            )
+            settlements_updated = cur.rowcount + cur2.rowcount
+
+            # Add real user to any trips the guest was in (INSERT OR IGNORE handles duplicates)
+            trip_rows = conn.execute(
+                "SELECT trip_id FROM trip_participants WHERE user_id = ?", (guest_id,)
+            ).fetchall()
+            for row in trip_rows:
+                conn.execute(
+                    "INSERT OR IGNORE INTO trip_participants (trip_id, user_id) VALUES (?, ?)",
+                    (row["trip_id"], real_user_id),
+                )
+
+            conn.execute("DELETE FROM trip_participants WHERE user_id = ?", (guest_id,))
+            conn.execute("DELETE FROM users WHERE id = ? AND is_guest = 1", (guest_id,))
+
+        return {
+            "expenses": expenses_updated,
+            "splits": splits_updated,
+            "settlements": settlements_updated,
+        }
+    finally:
+        conn.close()
+
+
 def get_all_known_users(exclude_telegram_id: str | None = None) -> list:
     """Return all users (authorized + guests). Optionally exclude one telegram_id (the caller)."""
     conn = get_connection()

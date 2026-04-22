@@ -210,6 +210,34 @@ async def cmd_tripstart_cancel(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
+@require_auth
+async def cmd_tripjoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/tripjoin — Join the currently active trip in this group."""
+    group_chat_id = str(update.effective_chat.id)
+    active_trip = await run_in_executor(queries.get_active_trip, group_chat_id)
+    if not active_trip:
+        await update.message.reply_text("❌ No active trip to join. Use /tripstart to create one.")
+        return
+
+    sender = update.effective_user
+    display_name = sender.username or sender.first_name or str(sender.id)
+    user_db_id = await run_in_executor(queries.upsert_user, str(sender.id), display_name)
+
+    participants = await run_in_executor(queries.get_trip_participants, active_trip["id"])
+    if any(p["id"] == user_db_id for p in participants):
+        await update.message.reply_text(
+            f"You're already a participant in *{active_trip['name']}*.",
+            parse_mode="Markdown",
+        )
+        return
+
+    await run_in_executor(queries.add_trip_participants, active_trip["id"], [user_db_id])
+    await update.message.reply_text(
+        f"✅ You've joined *{active_trip['name']}*! Future expenses will include you in splits.",
+        parse_mode="Markdown",
+    )
+
+
 def build_tripstart_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CommandHandler("tripstart", cmd_tripstart)],

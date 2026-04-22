@@ -51,9 +51,20 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     loop = asyncio.get_running_loop()
 
     if await loop.run_in_executor(None, queries.is_authorized, str(user.id), admin_ids):
+        trip_join_msg = ""
+        chat = update.effective_chat
+        if chat.type in ("group", "supergroup"):
+            group_chat_id = str(chat.id)
+            active_trip = await loop.run_in_executor(None, queries.get_active_trip, group_chat_id)
+            if active_trip:
+                display_name = user.username or user.first_name or str(user.id)
+                user_db_id = await loop.run_in_executor(None, queries.upsert_user, str(user.id), display_name)
+                await loop.run_in_executor(None, queries.add_trip_participants, active_trip["id"], [user_db_id])
+                trip_join_msg = f"\n\n📍 You've been added to the active trip *{active_trip['name']}*!"
         await update.message.reply_text(
             f"👋 Welcome back, {user.first_name}! You're already authorized.\n"
-            "Use /help to see available commands."
+            f"Use /help to see available commands.{trip_join_msg}",
+            parse_mode="Markdown",
         )
         return
 
@@ -84,11 +95,21 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await loop.run_in_executor(None, queries.authorize_user, str(user.id), "password")
     # Also register them in users table
     display_name = user.username or user.first_name or str(user.id)
-    await loop.run_in_executor(None, queries.upsert_user, str(user.id), display_name)
+    user_db_id = await loop.run_in_executor(None, queries.upsert_user, str(user.id), display_name)
+
+    trip_join_msg = ""
+    chat = update.effective_chat
+    if chat.type in ("group", "supergroup"):
+        group_chat_id = str(chat.id)
+        active_trip = await loop.run_in_executor(None, queries.get_active_trip, group_chat_id)
+        if active_trip:
+            await loop.run_in_executor(None, queries.add_trip_participants, active_trip["id"], [user_db_id])
+            trip_join_msg = f"\n\n📍 You've been added to the active trip *{active_trip['name']}*!"
 
     await update.message.reply_text(
         f"✅ Access granted! Welcome, {user.first_name}!\n"
-        "Use /help to see available commands."
+        f"Use /help to see available commands.{trip_join_msg}",
+        parse_mode="Markdown",
     )
 
 

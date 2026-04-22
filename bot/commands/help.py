@@ -19,6 +19,7 @@ HELP_TEXT = (
     "/exporthtml — Download an interactive HTML expense dashboard\n\n"
     "*Trips*\n"
     "/tripstart `<name> [currency]` — Start a new trip\n"
+    "/tripjoin — Join the active trip\n"
     "/tripend — End the active trip\n"
     "/tripsummary `[name]` — View trip expenses\n\n"
     "*Account*\n"
@@ -30,7 +31,8 @@ HELP_TEXT = (
     "/tripdelete — Delete a trip\n"
     "/tripdeleteforce — Permanently delete a trip and all its records\n"
     "/orphans — Manage unlinked expenses\n"
-    "/guestdelete — Remove a guest user"
+    "/guestdelete — Remove a guest user\n"
+    "/guestmerge — Replace a guest user with a real account"
 )
 
 

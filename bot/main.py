@@ -11,11 +11,12 @@ from bot.commands.balances import cmd_balances
 from bot.commands.delete import build_delete_handler
 from bot.commands.quickadd import cmd_quickadd
 from bot.commands.summary import cmd_summary
-from bot.commands.trips import build_tripstart_handler, cmd_tripend, cmd_tripsummary
+from bot.commands.trips import build_tripstart_handler, cmd_tripend, cmd_tripsummary, cmd_tripjoin
 from bot.commands.tripdelete import build_tripdelete_handler
 from bot.commands.tripdeleteforce import build_tripdeleteforce_handler
 from bot.commands.orphans import build_orphans_handler
 from bot.commands.guestdelete import build_guestdelete_handler
+from bot.commands.guestmerge import build_guestmerge_handler
 from bot.commands.settle import build_settle_handler
 from bot.commands.undo import build_undo_handler
 from bot.commands.edit import build_edit_handler
@@ -63,11 +64,13 @@ def main() -> None:
     app.add_handler(CommandHandler("exporthtml", cmd_exporthtml))
     app.add_handler(build_tripstart_handler())
     app.add_handler(CommandHandler("tripend", cmd_tripend))
+    app.add_handler(CommandHandler("tripjoin", cmd_tripjoin))
     app.add_handler(CommandHandler("tripsummary", cmd_tripsummary))
     app.add_handler(build_tripdelete_handler())
     app.add_handler(build_tripdeleteforce_handler())
     app.add_handler(build_orphans_handler())
     app.add_handler(build_guestdelete_handler())
+    app.add_handler(build_guestmerge_handler())
     app.add_handler(CommandHandler("help", cmd_help))
 
     logger.info("Bot starting...")
