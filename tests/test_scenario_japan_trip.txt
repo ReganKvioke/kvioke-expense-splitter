@@ -17,19 +17,76 @@ SECTION 0 — PRE-TRIP SETUP
 ──────────────────────────────────────────────────────────────────────────────
 
 Step 0.1  Each person authenticates
-  Regan      : /start <password>        → "Welcome, Regan! You're all set."
-  Brandeline : /start <password>        → "Welcome, Brandeline! You're all set."
-  Alice      : /start <password>        → "Welcome, Alice! You're all set."
+  Regan      : /start <password>  → "✅ Access granted! Welcome, Regan!"
+  Brandeline : /start <password>  → "✅ Access granted! Welcome, Brandeline!"
+  Alice      : /start <password>  → "✅ Access granted! Welcome, Alice!"
+
+  Re-running /start (already authorized):
+    Regan runs /start <password> again
+    Expected: "👋 Welcome back, Regan! You're already authorized."
 
 Step 0.2  Start the trip (Regan runs this)
   Command : /tripstart Japan 2026 JPY
   Flow    : Bot shows participant selection keyboard.
             Toggle ON: Brandeline, Alice  (Regan pre-selected)
-            Tap "Start Trip"
-  Expected: "🗺️ Trip Japan 2026 started! Participants: Regan, Brandeline, Alice.
-             Default currency: JPY."
+            Tap "✅ Start trip (3 participants)"
 
-VERIFY: /tripsummary → should list "Japan 2026" as active trip with 0 expenses.
+  Expected interim: "✈️ Trip Japan 2026 started!
+                     Default currency: JPY
+                     Participants (3): Regan, Brandeline, Alice
+
+                     ✏️ Optional: Set short display names for participants.
+                     Tap a name to set an alias, or tap Done to skip."
+
+  --- ALIAS-SETTING STEP (new in v1.3) ---
+  Bot shows alias keyboard with buttons for each participant.
+
+  Tap "@Brandeline":
+    Bot: "Enter a short alias for @Brandeline:"
+    Type: Brand
+    Expected: "✅ Alias Brand saved!"
+    Bot returns to alias keyboard showing "✏️ Brand" for Brandeline's row.
+
+  Tap "✅ Done":
+    Expected: "✅ All set! /quickadd will use JPY by default.
+               Use /tripend when the trip is over.
+               1 alias saved."
+
+  VERIFY alias is active: later /balances and /tripsummary should show
+  "Brand" instead of "Brandeline" in transfer suggestions and expense lists.
+
+  NOTE: To test alias uniqueness enforcement, attempt to set the SAME alias
+  for two participants (e.g. "Brand" for Alice). Bot should reject:
+  "❌ Brand is already used by another participant in this trip."
+
+Step 0.3  Late joiner — /tripjoin
+  Scenario: Charlie authenticated separately but was not selected at /tripstart.
+  Charlie runs: /start <password>
+    Expected: "✅ Access granted! Welcome, Charlie!"
+    (If trip already active, bot also adds: "📍 You've been added to the
+    active trip Japan 2026!")
+
+  If Charlie was not auto-joined, he self-joins:
+  Charlie runs: /tripjoin
+    Expected: "✅ You've joined Japan 2026! Future expenses will include
+               you in splits."
+
+  Already-participant test:
+  Regan (already in trip) runs: /tripjoin
+    Expected: "You're already a participant in Japan 2026."
+
+  No-trip test (run this in a group with no active trip, then restore):
+  Expected: "❌ No active trip to join. Use /tripstart to create one."
+
+  NOTE: Charlie is NOT included in any expense splits for this trip to keep
+  the balance math clean. He is solely used for the /tripjoin feature test.
+
+Step 0.4  Check available commands
+  Command : /help
+  Expected: Full command list with sections:
+    Expenses, Balances & Settlements, Summary & Export, Trips, Account
+  Admin (Regan only): additional Admin section visible.
+  Non-admin (Alice): Admin section NOT visible.
 
 ──────────────────────────────────────────────────────────────────────────────
 SECTION 1 — DAY 1 (Apr 14) ARRIVAL IN TOKYO
@@ -41,7 +98,11 @@ What     : Narita Express to Shinjuku
 Command  : /quickadd 3330 JPY transport Narita Express to Shinjuku
 SGD value: 3,330 ÷ 111 = SGD 30.00
 Split    : Equal among 3 → SGD 10.00 each (Regan, Brandeline, Alice)
-Expected : "✅ Added: (🚌 Transport) Narita Express to Shinjuku -- 3330 JPY"
+Expected : "✅ Expense saved! · 📍 Japan 2026
+            (🚌 Transport) Narita Express to Shinjuku -- JPY 3,330
+            Paid by: Regan · equal split"
+
+NOTE: /quickadd does NOT show a post-save keyboard; move to the next step.
 
 --- EXPENSE 02 ---
 Who pays : Brandeline
@@ -61,9 +122,25 @@ Command  : /add  (full guided flow)
      Split: Equal
      Split equally among:
        • Regan: SGD 30.00
-       • Brandeline: SGD 30.00
+       • Brand: SGD 30.00        ← alias displayed
        • Alice: SGD 30.00"
 Expected: "✅ Expense saved! · 📍 Japan 2026"
+
+  --- POST-SAVE KEYBOARD TEST ---
+  After saving Expense 02, the bot shows:
+    [💸 Add another]  [💰 View balances]
+
+  Brandeline taps "💸 Add another":
+    Bot re-enters the /add amount prompt without a new /add command.
+    Expected: "💸 Trip: Japan 2026
+
+               How much did you spend? (e.g. 50 USD, 30 JPY, 5000 JPY)
+               Currency defaults to JPY if omitted.
+
+               Send /cancel to abort."
+
+  Brandeline sends /cancel to abort this extra /add (it was just a test).
+  Expected: "❌ Expense entry cancelled."
 
 ──────────────────────────────────────────────────────────────────────────────
 SECTION 2 — DAY 2 (Apr 15) TOKYO SIGHTSEEING
@@ -75,44 +152,66 @@ What     : 7-Eleven breakfast
 Command  : /quickadd 1332 JPY food 7-Eleven breakfast and coffees
 SGD value: 1,332 ÷ 111 = SGD 12.00
 Split    : Equal among 3 → SGD 4.00 each
-Expected : "✅ Added: (🍜 Food) 7-Eleven breakfast and coffees -- 1332 JPY"
+Expected : "✅ Expense saved! · 📍 Japan 2026"
 
 --- EXPENSE 04 ---
 Who pays : Regan
 What     : TeamLab Planets tickets (all 3)
 Command  : /add
   Amount      : 13320 JPY  → SGD 120.00
-  Payer       : Me (Regan)
+  Who paid?   : Bot detects Regan paid last (Exp 01) and shows shortcut keyboard:
+                  [✅ Regan (same as last)]
+                  [👥 Change payer]
+                  [❌ Cancel]
+  Tap "✅ Regan (same as last)"
   Category    : Activities
   Description : TeamLab Planets tickets
   Split       : Equal
-  Summary check: SGD 40.00 each (Regan, Brandeline, Alice)
-Expected : "✅ Expense saved!"
+  Summary check: SGD 40.00 each (Regan, Brand, Alice)
+  Confirm     : ✅ Confirm
+Expected : "✅ Expense saved! · 📍 Japan 2026"
 
---- EXPENSE 05 (MISTAKE — will be fixed with /undo) ---
+  --- POST-SAVE KEYBOARD: "View balances" ---
+  After saving Expense 04, Regan taps "💰 View balances":
+    Bot replies with current balances (after Exp 01–04):
+      paid: Regan=150, Brandeline=90, Alice=12
+      Expected to see Brandeline roughly even, Alice in negative.
+    (Exact values shown; verify structure is correct, not the precise amount.)
+
+--- EXPENSE 05 (MISTAKE — will be fixed with /edit) ---
 Who pays : Regan
 What     : Vending machine drinks — accidentally entered WRONG CATEGORY
 Command  : /add
   Amount      : 2220 JPY   → SGD 20.00
-  Payer       : Me (Regan)
+  Payer       : [shortcut: Regan (same as last)]   ← using shortcut again
   Category    : Transport   ← WRONG! Should be Food
   Description : Vending machine drinks Harajuku
   Split       : Equal
   Confirm     : ✅ Confirm
 Expected : "✅ Expense saved!"
 
---- FEATURE TEST: /edit ---
-Regan realises the category was wrong. Fix it without delete-and-re-add.
+--- FEATURE TEST: /edit category ---
+Regan realises the category was wrong.
 Command : /edit
-Flow    : Bot shows paginated expense list.
+Flow    : Bot shows recent expense list.
           Select "Vending machine drinks Harajuku"
           Bot: "What do you want to change? 📝 Description  🏷️ Category  ❌ Cancel"
           Tap: 🏷️ Category
           Bot shows category keyboard → select "Food"
 Expected: "✅ Updated."
 
-VERIFY: /summary category → "Vending machine drinks" should now appear under Food,
-        NOT under Transport.
+VERIFY: /summary category → "Vending machine drinks" under Food, NOT Transport.
+
+--- FEATURE TEST: /edit description ---
+Regan also wants to rename the description for clarity.
+Command : /edit
+Flow    : Select "Vending machine drinks Harajuku"
+          Tap: 📝 Description
+          Bot: "Enter new description:"
+          Type: Harajuku vending machine drinks and snacks
+Expected: "✅ Updated."
+
+VERIFY: /summary → updated description appears in the expense list.
 
 --- EXPENSE 06 ---
 Who pays : Regan
@@ -128,7 +227,7 @@ Command  : /add
   Summary check:
     "Shares:
        • Regan: SGD 25.00
-       • Brandeline: SGD 25.00"
+       • Brand: SGD 25.00"
 Expected : "✅ Expense saved!"
 
 NOTE: Alice's owed total does NOT change from this expense. Verify via /balances.
@@ -140,7 +239,7 @@ Command  : /quickadd 4440 JPY food Ichiran Ramen dinner Shibuya
 SGD value: 4,440 ÷ 111 = SGD 40.00
 Split    : Equal among 3 → SGD 13.33 / 13.33 / 13.34
            (Brandeline as payer gets remainder: 13.33 + 0.01 = 13.34)
-Expected : "✅ Added: (🍜 Food) Ichiran Ramen dinner Shibuya -- 4440 JPY"
+Expected : "✅ Expense saved!"
 
 --- MID-DAY-2 BALANCE CHECK ---
 Command: /balances
@@ -152,7 +251,7 @@ Expected net balances (approximate, based on Exp 01–07):
   Exp02: Brand pays 90,  owed R+30 B+30 A+30
   Exp03: Alice pays 12,  owed R+4  B+4  A+4
   Exp04: Regan pays 120, owed R+40 B+40 A+40
-  Exp05: Regan pays 20,  owed R+6.67 B+6.67 A+6.66  (edited category only, math unchanged)
+  Exp05: Regan pays 20,  owed R+6.67 B+6.67 A+6.66  (edited, math unchanged)
   Exp06: Regan pays 50,  owed R+25 B+25 A+0
   Exp07: Brand pays 40,  owed R+13.33 B+13.34 A+13.33
 
@@ -167,11 +266,14 @@ Expected net balances (approximate, based on Exp 01–07):
     Brandeline : 130 - 129.01 = +0.99   (is owed SGD 0.99)
     Alice      :  12 - 103.99 = -91.99  (owes SGD 91.99)
 
-  (Note: tiny rounding cents accumulate from 20-SGD expense. Totals sum to ~0.)
-
   Suggested settlement at this point:
     Alice → Regan      : ~SGD 91.00
     Alice → Brandeline : ~SGD 0.99
+
+  VERIFY one-tap settle buttons appear on the /balances message:
+    Alice's client should see:
+      [💳 Settle SGD 91.99 → Regan]  (or split across creditors)
+    These buttons are reserved for full testing in Section 9.
 
 ──────────────────────────────────────────────────────────────────────────────
 SECTION 3 — DAY 3 (Apr 16) HAKONE DAY TRIP
@@ -240,9 +342,16 @@ Command  : /add
 --- EXPENSE 12 ---
 Who pays : Brandeline
 What     : Dotonbori street food
-Command  : /quickadd 3330 JPY food Dotonbori street food takoyaki
+Command  : /quickadd @Brandeline 3330 JPY food Dotonbori street food takoyaki
+           ↑ Using the @payer syntax to specify payer explicitly
 SGD value: 3,330 ÷ 111 = SGD 30.00
 Split    : Equal → SGD 10.00 each
+Expected : "✅ Expense saved! · 📍 Japan 2026
+            (🍜 Food) Dotonbori street food takoyaki -- JPY 3,330
+            Paid by: Brand · equal split"
+
+NOTE: @payer syntax resolves by display_name (or alias). "Brandeline" must match
+      the stored display_name. If using alias, "@Brand" also works.
 
 --- EXPENSE 13 ---
 Who pays : Alice
@@ -258,17 +367,17 @@ Command  : /add
   Summary check:
     "Shares:
        • Alice: SGD 12.00
-       • Brandeline: SGD 12.00"
+       • Brand: SGD 12.00"
 
 VERIFY: /balances → Regan's owed total unchanged from this expense.
 
 --- FEATURE TEST: /undo ---
 Brandeline accidentally /quickadd's a duplicate for the same takoyaki.
 Command : /quickadd 3330 JPY food Dotonbori takoyaki duplicate
-Expected: "✅ Added: ..."
+Expected: "✅ Expense saved! ..."
 
 Command : /undo
-Bot shows: "Last expense: [Dotonbori takoyaki duplicate · SGD 30.00 · food · paid by Brandeline]
+Bot shows: "Last expense: [Dotonbori takoyaki duplicate · SGD 30.00 · food · paid by Brand]
             ↩️ Undo  ❌ Keep"
 Tap: ↩️ Undo
 Expected: "✅ Deleted. Expense removed."
@@ -308,7 +417,7 @@ Expected to see categories listed with totals:
   - Food         : largest category
   - Transport    : Narita Express + Romancecar + Shinkansen
   - Activities   : TeamLab + Shibuya Sky + Hakone + Kinkakuji + Cup Noodles
-  - "Vending machine drinks" should be in Food (not Transport — confirmed from /edit test)
+  - "Vending machine" expense should be in Food (confirmed from /edit test)
 
 ──────────────────────────────────────────────────────────────────────────────
 SECTION 6 — DAY 6 (Apr 19) SHOPPING + FAREWELL DINNER
@@ -349,7 +458,7 @@ Split    : Equal → SGD 8.00 each
 SECTION 8 — FINAL BALANCE CALCULATION
 ──────────────────────────────────────────────────────────────────────────────
 
-All 18 expenses (Expense 05's duplicate was /undo'd so does not count):
+All 18 expenses (the duplicate was /undo'd and does not count):
 
   #   Payer       SGD      Split recipients & shares (SGD)
   ─── ─────────── ──────── ───────────────────────────────────────────────────
@@ -411,49 +520,114 @@ All 18 expenses (Expense 05's duplicate was /undo'd so does not count):
   "💰 Japan 2026 — Balances:
 
   🔴 Alice owes SGD 138.49 (owes the most)
-  🟡 Brandeline owes SGD 44.01
+  🟡 Brand owes SGD 44.01         ← alias used
   🟢 Regan is owed SGD 182.50
 
   Suggested settlements:
   • Alice → Regan: SGD 138.49
-  • Brandeline → Regan: SGD 44.01"
+  • Brand → Regan: SGD 44.01"
+
+  One-tap settle buttons should also appear (see Section 9 Test A).
 
   (Exact values depend on live exchange rates for the 2 USD expenses. The
   structure — Regan owed, Alice and Brandeline owe — should hold regardless.)
 
 ──────────────────────────────────────────────────────────────────────────────
+SECTION 8.5 — /me PERSONAL STATS
+──────────────────────────────────────────────────────────────────────────────
+
+Run this BEFORE any settlements (while all 18 expenses exist).
+
+--- TEST: Regan's personal stats ---
+Command: /me  (Regan runs this)
+
+Expected output:
+  "👤 Your stats for Japan 2026:
+
+  🟢 Regan is owed SGD 182.50
+
+  📤 Paid: SGD 496.00 (8 expenses)
+  📥 Your share: SGD 313.50
+
+  🏷️ Your spending by category:
+    🍜 Food: SGD 142.50
+    🚌 Transport: SGD 80.00
+    🎯 Activities: SGD 79.00
+    🛍️ Others: SGD 12.00
+
+  🏆 Biggest expense paid: Shinkansen Nozomi Tokyo to Osaka (SGD 150.00)"
+
+VERIFY: net = 496.00 − 313.50 = +182.50 ✓
+
+--- TEST: Alice's personal stats ---
+Command: /me  (Alice runs this)
+
+Expected output (approximate):
+  "👤 Your stats for Japan 2026:
+
+  🔴 Alice owes SGD 138.49
+
+  📤 Paid: SGD 162.00 (3 expenses)
+  📥 Your share: SGD 300.49
+
+  🏷️ Your spending by category:
+    [categories listed in descending order by Alice's share]
+
+  🏆 Biggest expense paid: Kaiseki dinner at Hakone Onsen (SGD 90.00)"
+
+--- TEST: /me with no active trip ---
+End the trip (or run in a group with no trip):
+Expected: "⛔ No active trip. Use /tripstart <name> [currency] to begin a trip first."
+
+──────────────────────────────────────────────────────────────────────────────
 SECTION 9 — SETTLEMENT TESTS
 ──────────────────────────────────────────────────────────────────────────────
 
---- TEST A: Legacy settle with WRONG recipient (should fail after our fix) ---
+--- TEST A: One-tap settle via /balances button ---
+
+Alice runs /balances. The message includes inline buttons at the bottom:
+  [💳 Settle SGD 138.49 → Regan]
+
+Alice taps the button "💳 Settle SGD 138.49 → Regan":
+  If Alice is NOT the account tapping (e.g. Brandeline taps Alice's button):
+    Expected: "❌ This settlement isn't yours to record." (alert, no change)
+
+  Alice taps her own button:
+    Expected: The button row disappears from the message.
+    New message sent: "✅ Recorded: Alice → Regan: SGD 138.49"
+
+VERIFY: /balances now shows Alice is settled up; Brandeline still owes 44.01.
+
+--- TEST B: Legacy settle with WRONG recipient (should fail) ---
 
 Brandeline tries to pay Alice instead of Regan.
 Command : /settle @Alice 44.01
-Expected: "❌ You don't owe @Alice in this trip.
-           You should settle with: @Regan.
+Expected: "❌ @Alice is not owed any money in this trip.
            Use /settle to pick interactively."
 
 VERIFY: /balances remains unchanged (no settlement recorded).
 
---- TEST B: Alice settles via interactive flow ---
+--- TEST C: Brandeline settles via interactive flow (with custom amount) ---
 
-Alice runs /settle (no args):
+Brandeline runs /settle (no args):
 Expected keyboard:
   "💳 Who are you settling with? (Trip: Japan 2026)
-   👤 Regan (you owe SGD 138.49)
+   👤 Regan (you owe SGD 44.01)
    ❌ Cancel"
 
-Alice taps 👤 Regan:
-  "Settle SGD 138.49 with Regan?
-   ✅ Confirm SGD 138.49   ✏️ Custom amount   ❌ Cancel"
+Brandeline taps 👤 Regan:
+  "Settle SGD 44.01 with Regan?
+   ✅ Confirm SGD 44.01   ✏️ Custom amount   ❌ Cancel"
 
-Alice taps ✅ Confirm:
-Expected: "✅ Recorded: Alice paid Regan SGD 138.49."
-
---- TEST C: Brandeline settles via legacy one-liner ---
-
-Command : /settle @Regan 44.01
-Expected: "✅ Recorded: Brandeline paid Regan SGD 44.01."
+  --- Custom amount sub-test ---
+  Brandeline taps ✏️ Custom amount:
+    Expected: "Enter the amount to settle with Regan (max SGD 44.01):"
+  Brandeline types: 44.02  (over-amount)
+    Expected: "❌ You can settle at most SGD 44.01. Please enter a smaller amount."
+  Brandeline types: 0  (invalid)
+    Expected: "❌ Amount must be positive."
+  Brandeline types: 44.01  (correct)
+    Expected: "✅ Recorded: Brand paid Regan SGD 44.01."
 
 --- TEST D: Verify post-settlement balances ---
 
@@ -467,8 +641,16 @@ Command: /settlements
 Expected output:
   "📋 Settlements — Japan 2026:
    • <date>  Alice → Regan         SGD 138.49
-   • <date>  Brandeline → Regan    SGD 44.01
+   • <date>  Brand → Regan         SGD  44.01
    Total settled: SGD 182.50"
+
+--- TEST F: Settle with no outstanding balance (attempt after all settled) ---
+
+Alice (already settled) runs /settle (interactive):
+Expected: "✅ You have no outstanding balances to settle in this trip."
+
+Regan (creditor) runs /settle @Alice 10:
+Expected: "❌ You have no outstanding balance to settle in this trip."
 
 ──────────────────────────────────────────────────────────────────────────────
 SECTION 10 — ADDITIONAL FEATURE CHECKS
@@ -477,10 +659,10 @@ SECTION 10 — ADDITIONAL FEATURE CHECKS
 --- /summary tests ---
 
 Command: /summary today
-Expected: shows only expenses logged today (useful during the trip each evening)
+Expected: shows only expenses logged today
 
 Command: /summary week
-Expected: shows all 18 expenses (entire trip was within 7 days)
+Expected: shows all 18 expenses (entire trip within 7 days)
 
 Command: /summary month
 Expected: same as /summary week for this trip
@@ -492,20 +674,43 @@ Expected summary sorted by total SGD descending, e.g.:
   Activities   : SGD ???
   Others       : SGD 36.00  (Don Quijote only)
 
---- /tripsummary test ---
+--- /tripsummary tests ---
+
+Command: /tripsummary
+Expected: lists all trips for this group with status, expense count, total.
 
 Command: /tripsummary Japan 2026
-Expected: Full paginated expense list with:
+Expected: Full expense list with:
   - 18 rows (undo removed the duplicate)
   - Each row: date, description, SGD amount, who paid, category
-  - Total at bottom matching TOTAL PAID (SGD 939.50 approx)
+  - By-category breakdown at the bottom
+  - Total matching approx SGD 939.50
+
+--- /exporthtml test ---
+
+Command: /exporthtml
+Expected: Bot replies "⏳ Generating dashboard…"
+  Then sends a .html document file named "Japan_2026_dashboard.html"
+  Caption: "📊 Japan 2026 — Expense Dashboard
+            18 expenses · SGD 939.50 total
+            Open the HTML file in any browser."
+
+Open the file in a browser and verify:
+  - Trip name and "Active" / "Ended" badge displayed
+  - Stat cards: Total Spent, Expenses (18), Participants (3), Settlements (2)
+  - Net balance list with correct amounts
+  - Suggested transfers section (should say "All settled up! 🎉")
+  - Category doughnut chart renders
+  - Person spending bar chart renders
+  - Expense table with sortable columns and search bar
+  - Settlement table with 2 rows
+  - Footer shows generated date
 
 --- /delete test (intentional) ---
 
-Regan decides to remove the vending machine drinks expense (they found the
-receipt and it was personal, not shared).
+Regan decides to remove the vending machine drinks expense.
 Command : /delete
-Flow    : Select "Vending machine drinks Harajuku" from list
+Flow    : Select "Harajuku vending machine drinks and snacks" from list
           Tap ✅ Confirm Delete
 Expected: "✅ Deleted."
 
@@ -516,13 +721,142 @@ VERIFY: /balances updates accordingly (Regan's net decreases by ~6.67,
 --- /tripend ---
 
 Command: /tripend
-Expected: "🏁 Trip Japan 2026 ended. Use /tripsummary to view the full summary."
+Expected: "🏁 Trip Japan 2026 ended.
+           17 expenses · SGD ??? total
+           Use /tripsummary Japan 2026 to review it."
 
 VERIFY: /add after /tripend → "⛔ No active trip. Use /tripstart to begin."
-VERIFY: /balances after /tripend → same message.
+VERIFY: /balances after /tripend → "⛔ No active trip."
 
 ──────────────────────────────────────────────────────────────────────────────
-SECTION 11 — ERROR / EDGE CASE TESTS
+SECTION 11 — ADMIN COMMANDS (Regan only)
+──────────────────────────────────────────────────────────────────────────────
+
+NOTE: All commands in this section must be run by Regan (admin). Running them
+as Alice or Brandeline should show "⛔ You don't have access."
+
+--- /users ---
+
+Command: /users
+Expected: list of all authorized users with authorization date and method:
+  "👥 Authorized users (3):
+   • Regan       — authorized via admin
+   • Brandeline  — authorized via password on <date>
+   • Alice       — authorized via password on <date>"
+
+--- /revoke ---
+
+Command: /revoke @Alice
+Expected: "✅ Access revoked for Alice."
+
+VERIFY: Alice sends /balances
+  Expected: "⛔ You don't have access. Use /start <password> to authenticate."
+
+Restore: Alice re-runs /start <password>
+Expected: "✅ Access granted! Welcome, Alice!"
+  (Auto-joins the active trip if one is running, or no trip message if ended.)
+
+Command: /revoke @UnknownUser
+Expected: "❌ User @UnknownUser not found or not authorized."
+
+--- /tripdelete (soft delete) ---
+Prerequisite: start a throwaway trip.
+
+Command: /tripstart Throwaway SGD
+  Select only Regan → tap "Start Trip" → tap "Done" (skip aliases)
+Command: /quickadd 10 SGD food Test expense
+  (adds one expense to Throwaway)
+Command: /tripend
+
+Command: /tripdelete
+  Bot shows list of ended trips.
+  Select "Throwaway"
+  Bot: "⚠️ Delete trip Throwaway? This removes the trip record but keeps
+        expenses as orphans (they remain in history but are unlinked)."
+  Tap ✅ Confirm Delete
+Expected: "✅ Trip Throwaway deleted. 1 expense(s) now unlinked."
+
+--- /orphans ---
+After the soft delete above, the "Test expense" is now orphaned (trip_id = NULL).
+
+Command: /orphans
+Expected: bot shows the orphaned expense with options:
+  "🔍 1 unlinked expense found:
+   • Test expense — SGD 10.00 — food — paid by Regan"
+  Options: [🗑️ Delete all]  [❌ Cancel]
+
+Tap 🗑️ Delete all:
+Expected: "✅ 1 orphaned expense deleted."
+
+VERIFY: /orphans again → "No unlinked expenses found."
+
+--- /tripdeleteforce ---
+Prerequisite: start another throwaway trip.
+
+Command: /tripstart ForceTest SGD
+  Select Regan → "Start Trip" → "Done"
+Command: /quickadd 10 SGD food Force delete test
+Command: /tripend
+
+Command: /tripdeleteforce
+  Bot shows list of trips.
+  Select "ForceTest"
+  Bot: "⚠️ PERMANENTLY delete ForceTest and ALL its records?
+        This cannot be undone. 1 expense and 0 settlements will be destroyed."
+  Tap ✅ Confirm (permanent delete)
+Expected: "✅ Permanently deleted: ForceTest.
+           1 expense, 0 settlements removed."
+
+VERIFY: /tripsummary → "ForceTest" no longer listed.
+
+--- Guest user management ---
+
+Prerequisite: Add an expense with a guest payer.
+Command: /add
+  Amount      : 1110 JPY → SGD 10.00
+  Payer       : [tap ➕ New guest payer]
+  Guest name  : Hotel Porter
+  Category    : Others
+  Description : Hotel porter tip
+  Split       : Equal → SGD 3.33 each (Regan, Brandeline, Alice)
+  Confirm     : ✅ Confirm
+Expected: "✅ Expense saved! · 📍 ..."
+
+VERIFY: /balances shows "Hotel Porter" with a net balance.
+VERIFY: /tripsummary shows "Hotel Porter" as payer for the tip expense.
+
+--- /guestmerge ---
+Later, the hotel porter signed up for Telegram. Merge their guest record.
+
+Command: /guestmerge
+  Bot shows list of guest users: [🧳 Hotel Porter]
+  Tap "🧳 Hotel Porter"
+  Bot: "Select the real account to merge into:"
+  [Shows list of authorized users]
+  Select "Regan" (for test purposes — in reality you'd pick the porter's account)
+  Bot: "⚠️ This will reassign all expenses and splits from Hotel Porter → Regan."
+  Tap ✅ Confirm Merge
+Expected: "✅ Merged Hotel Porter → Regan.
+           1 expense, 1 split, 0 settlements updated."
+
+VERIFY: The hotel tip expense now shows "Regan" as payer.
+VERIFY: "Hotel Porter" no longer appears in /balances or guest list.
+
+--- /guestdelete ---
+Add another guest for this test.
+
+Command: /add → New guest payer "Temp Guest" → any small expense → Confirm
+Command: /guestdelete
+  Bot shows guest users: [🧳 Temp Guest]
+  Tap "🧳 Temp Guest"
+  Bot: "⚠️ Temp Guest has 1 expense. Deleting will also remove those records."
+  Tap ✅ Confirm Delete
+Expected: "✅ Guest Temp Guest deleted."
+
+VERIFY: Guest no longer appears in any list.
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 12 — ERROR / EDGE CASE TESTS
 ──────────────────────────────────────────────────────────────────────────────
 
 Test E1 — Unauthenticated user
@@ -561,45 +895,100 @@ Test E9 — Conversation timeout
   Start /add, enter amount, then wait >5 minutes without responding
   Expected: "⏱️ Expense entry timed out after 5 minutes. Use /add to start again."
 
+Test E10 — /quickadd unknown @payer
+  /quickadd @NonExistentUser 50 food test item
+  Expected: "❌ Unknown user @NonExistentUser.
+             They must have used the bot at least once in this group."
+
+Test E11 — /start wrong password
+  New user sends /start wrongpassword
+  Expected: "❌ Incorrect password. You have N attempts remaining."
+
+Test E12 — /start rate limiting
+  New user sends /start wrongpassword 3 times rapidly
+  Expected on 4th attempt: "⛔ Too many attempts. Try again later."
+
+Test E13 — /edit on a nonexistent expense
+  Run /edit in a trip with no expenses yet
+  Expected: bot shows empty list or "No expenses found to edit."
+
 ──────────────────────────────────────────────────────────────────────────────
-SECTION 12 — VERIFICATION CHECKLIST
+SECTION 13 — VERIFICATION CHECKLIST
 ──────────────────────────────────────────────────────────────────────────────
 
-Feature                          Tested In        Pass/Fail  Notes
-──────────────────────────────── ──────────────── ─────────  ─────────────────
-/start password auth             Sec 0.1          [ ]
-/tripstart + participant select  Sec 0.2          [ ]
-/quickadd (JPY default)          Exp 01,07,08,12  [ ]
-/quickadd (explicit JPY)         Exp 03,14,18     [ ]
-/add equal split 3-way           Exp 02,04,09,10  [ ]
-/add equal split with payer      Exp 11,17        [ ]
-/add custom split 2-person       Exp 06,13        [ ]
-/add custom split 3-person       Exp 15           [ ]
-/add USD currency conversion     Exp 15,17        [ ]
-/edit category change            Sec 2 (Exp 05)   [ ]
-/undo last expense               Sec 4 duplicate  [ ]
-/balances mid-trip               Sec 2,3          [ ]
-/balances post-settlement        Test D           [ ]
-/summary today                   Sec 10           [ ]
-/summary week                    Sec 10           [ ]
-/summary category                Sec 5,10         [ ]
-/delete intentional              Sec 10           [ ]
-/settle interactive flow         Test B           [ ]
-/settle legacy correct person    Test C           [ ]
-/settle legacy WRONG person      Test A           [ ]  new validation
-/settle over-amount blocked      Test E6          [ ]
-/settle self blocked             Test E7          [ ]
-/settlements history view        Test E           [ ]
-/tripsummary full list           Sec 10           [ ]
-/tripend                         Sec 10           [ ]
-Commands blocked after tripend   Sec 10           [ ]
-Unauthenticated block            Test E1          [ ]
-/add blocked before trip         Test E2          [ ]
-Negative amount rejected         Test E3          [ ]
-Unknown currency rejected        Test E4          [ ]
-Custom split total mismatch      Test E5          [ ]
-/undo empty trip                 Test E8          [ ]
-Conversation timeout             Test E9          [ ]
+Feature                               Tested In           Pass/Fail  Notes
+───────────────────────────────────── ─────────────────── ─────────  ──────────────
+/start password auth (new user)       Sec 0.1             [ ]
+/start already-authorized             Sec 0.1             [ ]
+/start wrong password                 Test E11            [ ]
+/start rate limiting                  Test E12            [ ]
+/help (user view)                     Sec 0.4             [ ]
+/help (admin extra section)           Sec 0.4             [ ]
+/tripstart + participant select       Sec 0.2             [ ]
+/tripstart alias-setting flow         Sec 0.2             [ ]
+/tripstart alias uniqueness check     Sec 0.2             [ ]
+/tripjoin (late join)                 Sec 0.3             [ ]
+/tripjoin (already participant)       Sec 0.3             [ ]
+/tripjoin (no active trip)            Sec 0.3             [ ]
+Auto-join on /start (re-auth)         Sec 0.3             [ ]
+/quickadd (JPY default)               Exp 01,07,08,18     [ ]
+/quickadd (explicit currency)         Exp 03,14           [ ]
+/quickadd @payer syntax               Exp 12              [ ]
+/quickadd unknown @payer blocked      Test E10            [ ]
+/add equal split 3-way                Exp 02,04,09,10     [ ]
+/add equal split 2-way (custom)       Exp 06,13           [ ]
+/add custom split 3-person            Exp 15              [ ]
+/add USD currency conversion          Exp 15,17           [ ]
+/add payer shortcut (same as last)    Exp 04,05           [ ]
+/add guest payer (new)                Sec 11 guest test   [ ]
+Post-save "Add another" button        Sec 1 (Exp 02)      [ ]
+Post-save "View balances" button      Sec 2 (Exp 04)      [ ]
+/edit category change                 Sec 2 (Exp 05)      [ ]
+/edit description change              Sec 2 (after Exp 05)[ ]
+/undo last expense                    Sec 4 duplicate     [ ]
+/undo empty trip                      Test E8             [ ]
+/delete intentional                   Sec 10              [ ]
+/balances mid-trip                    Sec 2,3             [ ]
+/balances one-tap settle button       Sec 9 Test A        [ ]
+/balances post-settlement             Sec 9 Test D        [ ]
+/settle one-tap from /balances        Sec 9 Test A        [ ]
+/settle wrong recipient blocked       Sec 9 Test B        [ ]
+/settle interactive flow              Sec 9 Test C        [ ]
+/settle custom amount (interactive)   Sec 9 Test C        [ ]
+/settle custom over-amount blocked    Sec 9 Test C        [ ]
+/settle legacy correct person         Sec 9 (Test C alt)  [ ]
+/settle over-amount blocked           Test E6             [ ]
+/settle self blocked                  Test E7             [ ]
+/settle with no balance               Sec 9 Test F        [ ]
+/settlements history view             Sec 9 Test E        [ ]
+/me personal stats (creditor)         Sec 8.5             [ ]
+/me personal stats (debtor)           Sec 8.5             [ ]
+/me no active trip                    Sec 8.5             [ ]
+/exporthtml (file generated)          Sec 10              [ ]
+/exporthtml (HTML content correct)    Sec 10              [ ]
+/summary today                        Sec 10              [ ]
+/summary week                         Sec 10              [ ]
+/summary month                        Sec 10              [ ]
+/summary category                     Sec 5,10            [ ]
+/tripsummary (list all trips)         Sec 10              [ ]
+/tripsummary <name> (detail)          Sec 10              [ ]
+/tripend                              Sec 10              [ ]
+Commands blocked after tripend        Sec 10              [ ]
+Unauthenticated block                 Test E1             [ ]
+/add blocked before trip              Test E2             [ ]
+Negative amount rejected              Test E3             [ ]
+Unknown currency rejected             Test E4             [ ]
+Custom split mismatch rejected        Test E5             [ ]
+Conversation timeout                  Test E9             [ ]
+/edit on empty trip                   Test E13            [ ]
+Admin /users                          Sec 11              [ ]
+Admin /revoke                         Sec 11              [ ]
+Admin /revoke + re-auth               Sec 11              [ ]
+Admin /tripdelete (soft)              Sec 11              [ ]
+Admin /orphans (view + delete)        Sec 11              [ ]
+Admin /tripdeleteforce (permanent)    Sec 11              [ ]
+Guest /guestmerge                     Sec 11              [ ]
+Guest /guestdelete                    Sec 11              [ ]
 
 ──────────────────────────────────────────────────────────────────────────────
 END OF PLAYBOOK
