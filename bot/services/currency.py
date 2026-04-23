@@ -1,4 +1,5 @@
 """Fetch and cache exchange rates from open.er-api.com."""
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -12,6 +13,7 @@ CACHE_TTL_SECONDS = 3600  # 1 hour
 
 _cache: dict = {}
 _cache_timestamp: float = 0.0
+_cache_lock = asyncio.Lock()
 
 
 async def get_rates() -> Optional[dict[str, float]]:
@@ -21,23 +23,29 @@ async def get_rates() -> Optional[dict[str, float]]:
     if _cache and (now - _cache_timestamp) < CACHE_TTL_SECONDS:
         return _cache
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(EXCHANGE_RATE_URL)
-            resp.raise_for_status()
-            data = resp.json()
+    async with _cache_lock:
+        # Re-check inside the lock: another coroutine may have refreshed while we waited.
+        now = time.monotonic()
+        if _cache and (now - _cache_timestamp) < CACHE_TTL_SECONDS:
+            return _cache
 
-        if data.get("result") != "success":
-            logger.error("Exchange rate API returned non-success: %s", data)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(EXCHANGE_RATE_URL)
+                resp.raise_for_status()
+                data = resp.json()
+
+            if data.get("result") != "success":
+                logger.error("Exchange rate API returned non-success: %s", data)
+                return None
+
+            _cache = data["rates"]
+            _cache_timestamp = now
+            logger.info("Exchange rates refreshed")
+            return _cache
+        except Exception as exc:
+            logger.error("Failed to fetch exchange rates: %s", exc)
             return None
-
-        _cache = data["rates"]
-        _cache_timestamp = now
-        logger.info("Exchange rates refreshed")
-        return _cache
-    except Exception as exc:
-        logger.error("Failed to fetch exchange rates: %s", exc)
-        return None
 
 
 async def convert_to_sgd(amount: float, currency: str) -> tuple[Optional[float], Optional[float]]:

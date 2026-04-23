@@ -5,7 +5,10 @@ from bot.utils.constants import CATEGORY_EMOJIS, CURRENCY_TIMEZONES
 
 
 def _parse_iso(iso_timestamp: str) -> datetime:
-    return datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+    dt = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def fmt_sgd(amount: float) -> str:
@@ -101,7 +104,7 @@ def fmt_category(cat: str) -> str:
 
 
 def now_utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def fmt_balance_line(name: str, net: float, is_worst: bool = False) -> str:

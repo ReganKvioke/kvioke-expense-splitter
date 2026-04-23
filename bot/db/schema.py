@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     telegram_id  TEXT    NOT NULL UNIQUE,
     display_name TEXT    NOT NULL,
+    alias        TEXT,
     is_guest     INTEGER NOT NULL DEFAULT 0
 );
 """
@@ -81,6 +82,7 @@ CREATE_TRIP_PARTICIPANTS = """
 CREATE TABLE IF NOT EXISTS trip_participants (
     trip_id  INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
     user_id  INTEGER NOT NULL REFERENCES users(id),
+    alias    TEXT,
     PRIMARY KEY (trip_id, user_id)
 );
 """
@@ -105,6 +107,21 @@ def init_db() -> None:
                 )
             except sqlite3.OperationalError:
                 pass  # column already exists
+            # Migration: add alias to users (no-op if column already exists)
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN alias TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            # Migration: add alias to trip_participants (no-op if column already exists)
+            try:
+                conn.execute("ALTER TABLE trip_participants ADD COLUMN alias TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            # Unique index: no two participants in the same trip share an alias
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_trip_participants_alias "
+                "ON trip_participants(trip_id, alias) WHERE alias IS NOT NULL"
+            )
             # Migration: add trip_id to expenses (no-op if column already exists)
             try:
                 conn.execute(

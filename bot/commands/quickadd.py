@@ -166,7 +166,7 @@ async def cmd_quickadd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     try:
         expense_id = await run_in_executor(
-            queries.insert_expense,
+            queries.insert_expense_with_splits,
             payer_db_id,
             parsed["amount"],
             parsed["currency"],
@@ -176,9 +176,9 @@ async def cmd_quickadd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parsed["description"],
             "equal",
             group_chat_id,
+            splits,
             trip_id,
         )
-        await run_in_executor(queries.insert_expense_splits, expense_id, splits)
     except Exception as exc:
         logger.error("quickadd failed: %s", exc)
         await update.message.reply_text("❌ Failed to save expense. Please try again.")
@@ -187,6 +187,7 @@ async def cmd_quickadd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     cat_label = fmt_category(parsed["category"])
     trip_note = f" · 📍 {active_trip['name']}" if active_trip else ""
     await update.message.reply_text(
-        f"✅ ({cat_label}) {parsed['description']} -- {fmt_amount(parsed['amount'], parsed['currency'])}"
-        f"\nPaid by: {payer_display} · split equally{trip_note}"
+        f"✅ Expense saved!{trip_note}\n"
+        f"({cat_label}) {parsed['description']} -- {fmt_amount(parsed['amount'], parsed['currency'])}\n"
+        f"Paid by: {payer_display} · equal split"
     )

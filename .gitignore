@@ -3,6 +3,22 @@
 *.sqlite
 __pycache__/
 *.pyc
+*.pyo
 .DS_Store
 venv/
-/tests
+.venv/
+
+# Pytest
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build artifacts
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Logs
+*.log

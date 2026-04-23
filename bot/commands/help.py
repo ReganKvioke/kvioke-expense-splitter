@@ -1,8 +1,10 @@
+import os
+
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.middleware.auth import require_auth
 
-HELP_TEXT = (
+_HELP_USER = (
     "🤖 *KviokeExpenseSplitter*\n\n"
     "*Expenses*\n"
     "/add — Log a shared expense \\(guided flow\\)\n"
@@ -16,6 +18,7 @@ HELP_TEXT = (
     "/settlements — Settlement history for the active trip\n\n"
     "*Summary & Export*\n"
     "/summary `[today|week|month|category]` — Spending breakdown\n"
+    "/me — Your personal stats for the active trip\n"
     "/exporthtml — Download an interactive HTML expense dashboard\n\n"
     "*Trips*\n"
     "/tripstart `<name> [currency]` — Start a new trip\n"
@@ -24,8 +27,11 @@ HELP_TEXT = (
     "/tripsummary `[name]` — View trip expenses\n\n"
     "*Account*\n"
     "/start `<password>` — Authenticate\n"
-    "/help — Show this message\n\n"
-    "*Admin*\n"
+    "/help — Show this message"
+)
+
+_HELP_ADMIN_EXTRA = (
+    "\n\n*Admin*\n"
     "/users — List authorized users\n"
     "/revoke `@user` — Revoke access\n"
     "/tripdelete — Delete a trip\n"
@@ -36,6 +42,14 @@ HELP_TEXT = (
 )
 
 
+def _admin_ids() -> set[str]:
+    raw = os.getenv("ADMIN_USER_IDS", "")
+    return {s.strip() for s in raw.split(",") if s.strip()}
+
+
 @require_auth
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
+    tg_id = str(update.effective_user.id)
+    is_admin = tg_id in _admin_ids()
+    text = _HELP_USER + (_HELP_ADMIN_EXTRA if is_admin else "")
+    await update.message.reply_text(text, parse_mode="Markdown")

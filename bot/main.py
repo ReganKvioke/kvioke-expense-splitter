@@ -3,11 +3,11 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
 from bot.db.schema import init_db
 from bot.commands.add import build_add_handler
-from bot.commands.balances import cmd_balances
+from bot.commands.balances import cmd_balances, handle_post_add_balances, handle_settle_quick
 from bot.commands.delete import build_delete_handler
 from bot.commands.quickadd import cmd_quickadd
 from bot.commands.summary import cmd_summary
@@ -22,6 +22,7 @@ from bot.commands.undo import build_undo_handler
 from bot.commands.edit import build_edit_handler
 from bot.commands.settlements import cmd_settlements
 from bot.commands.exporthtml import cmd_exporthtml
+from bot.commands.me import cmd_me
 from bot.commands.help import cmd_help
 from bot.middleware.auth import cmd_start, cmd_revoke, cmd_users
 
@@ -51,6 +52,10 @@ def main() -> None:
     app.add_handler(CommandHandler("revoke", cmd_revoke))
     app.add_handler(CommandHandler("users", cmd_users))
 
+    # Standalone callback handlers (registered before ConversationHandlers so they fire first)
+    app.add_handler(CallbackQueryHandler(handle_post_add_balances, pattern=r"^post_add:balances$"))
+    app.add_handler(CallbackQueryHandler(handle_settle_quick, pattern=r"^settle_q:"))
+
     # Expense commands (auth middleware applied inside each handler)
     app.add_handler(build_add_handler())
     app.add_handler(build_delete_handler())
@@ -62,6 +67,7 @@ def main() -> None:
     app.add_handler(build_edit_handler())
     app.add_handler(CommandHandler("settlements", cmd_settlements))
     app.add_handler(CommandHandler("exporthtml", cmd_exporthtml))
+    app.add_handler(CommandHandler("me", cmd_me))
     app.add_handler(build_tripstart_handler())
     app.add_handler(CommandHandler("tripend", cmd_tripend))
     app.add_handler(CommandHandler("tripjoin", cmd_tripjoin))

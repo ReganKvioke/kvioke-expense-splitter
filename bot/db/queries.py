@@ -146,14 +146,13 @@ def merge_guest_user(guest_id: int, real_user_id: int) -> dict:
             settlements_updated = cur.rowcount + cur2.rowcount
 
             # Add real user to any trips the guest was in (INSERT OR IGNORE handles duplicates)
-            trip_rows = conn.execute(
-                "SELECT trip_id FROM trip_participants WHERE user_id = ?", (guest_id,)
-            ).fetchall()
-            for row in trip_rows:
-                conn.execute(
-                    "INSERT OR IGNORE INTO trip_participants (trip_id, user_id) VALUES (?, ?)",
-                    (row["trip_id"], real_user_id),
-                )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO trip_participants (trip_id, user_id)
+                SELECT trip_id, ? FROM trip_participants WHERE user_id = ?
+                """,
+                (real_user_id, guest_id),
+            )
 
             conn.execute("DELETE FROM trip_participants WHERE user_id = ?", (guest_id,))
             conn.execute("DELETE FROM users WHERE id = ? AND is_guest = 1", (guest_id,))
@@ -199,6 +198,32 @@ def create_guest_user(display_name: str) -> int:
                 (synthetic_id, display_name.strip()),
             )
         return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def set_trip_alias(trip_id: int, user_id: int, alias: str | None) -> None:
+    """Set or clear the display alias for a participant within a specific trip.
+
+    Raises ValueError if the alias (case-insensitive) is already taken by
+    another participant in the same trip.
+    """
+    conn = get_connection()
+    try:
+        clean = alias.strip() if alias else None
+        if clean:
+            conflict = conn.execute(
+                "SELECT user_id FROM trip_participants "
+                "WHERE trip_id = ? AND LOWER(alias) = LOWER(?) AND user_id != ?",
+                (trip_id, clean, user_id),
+            ).fetchone()
+            if conflict:
+                raise ValueError(f"Alias '{clean}' is already in use by another participant in this trip.")
+        with conn:
+            conn.execute(
+                "UPDATE trip_participants SET alias = ? WHERE trip_id = ? AND user_id = ?",
+                (clean, trip_id, user_id),
+            )
     finally:
         conn.close()
 
@@ -362,6 +387,50 @@ def insert_expense_splits(expense_id: int, splits: list[tuple[int, float]]) -> N
         conn.close()
 
 
+def insert_expense_with_splits(
+    paid_by_user_id: int,
+    amount: float,
+    currency: str,
+    amount_sgd: float,
+    exchange_rate: float,
+    category: str,
+    description: str,
+    split_method: str,
+    group_chat_id: str,
+    splits: list[tuple[int, float]],
+    trip_id: Optional[int] = None,
+) -> int:
+    """Insert expense and its splits atomically in a single transaction.
+
+    splits: list of (user_id, amount_sgd)
+    Returns the new expense id.
+    """
+    conn = get_connection()
+    try:
+        with conn:
+            cur = conn.execute(
+                """
+                INSERT INTO expenses
+                    (paid_by_user_id, amount, currency, amount_sgd, exchange_rate,
+                     category, description, split_method, created_at, group_chat_id, trip_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    paid_by_user_id, amount, currency, amount_sgd, exchange_rate,
+                    category, description, split_method, now_utc_iso(), str(group_chat_id),
+                    trip_id,
+                ),
+            )
+            expense_id = cur.lastrowid
+            conn.executemany(
+                "INSERT INTO expense_splits (expense_id, user_id, amount_sgd) VALUES (?, ?, ?)",
+                [(expense_id, uid, amt) for uid, amt in splits],
+            )
+        return expense_id
+    finally:
+        conn.close()
+
+
 def get_expenses_for_group(
     group_chat_id: str,
     since_iso: Optional[str] = None,
@@ -379,8 +448,9 @@ def get_expenses_for_group(
             params.append(trip_id)
         where = " AND ".join(conditions)
         rows = conn.execute(
-            f"SELECT e.*, u.display_name AS paid_by_name "
+            f"SELECT e.*, COALESCE(tp.alias, u.display_name) AS paid_by_name "
             f"FROM expenses e JOIN users u ON u.id = e.paid_by_user_id "
+            f"LEFT JOIN trip_participants tp ON tp.user_id = e.paid_by_user_id AND tp.trip_id = e.trip_id "
             f"WHERE {where} ORDER BY e.created_at DESC",
             params,
         ).fetchall()
@@ -394,9 +464,10 @@ def get_expense_by_id(expense_id: int, group_chat_id: str) -> Optional[dict]:
     try:
         row = conn.execute(
             """
-            SELECT e.*, u.display_name AS paid_by_name
+            SELECT e.*, COALESCE(tp.alias, u.display_name) AS paid_by_name
             FROM expenses e
             JOIN users u ON u.id = e.paid_by_user_id
+            LEFT JOIN trip_participants tp ON tp.user_id = e.paid_by_user_id AND tp.trip_id = e.trip_id
             WHERE e.id = ? AND e.group_chat_id = ?
             """,
             (expense_id, str(group_chat_id)),
@@ -456,8 +527,9 @@ def get_recent_expenses_for_group(
         where = " AND ".join(conditions)
         rows = conn.execute(
             f"SELECT e.id, e.description, e.amount, e.currency, e.amount_sgd, "
-            f"e.category, e.created_at, u.display_name AS paid_by_name "
+            f"e.category, e.created_at, COALESCE(tp.alias, u.display_name) AS paid_by_name "
             f"FROM expenses e JOIN users u ON u.id = e.paid_by_user_id "
+            f"LEFT JOIN trip_participants tp ON tp.user_id = e.paid_by_user_id AND tp.trip_id = e.trip_id "
             f"WHERE {where} ORDER BY e.created_at DESC LIMIT ?",
             params + [limit],
         ).fetchall()
@@ -546,16 +618,30 @@ def get_balance_data(group_chat_id: str, trip_id: Optional[int] = None) -> dict:
             stl_params,
         ).fetchall()
 
-        users = conn.execute(
-            f"SELECT DISTINCT u.id, u.display_name FROM users u "
-            f"WHERE u.id IN ("
-            f"  SELECT paid_by_user_id FROM expenses WHERE {exp_filter} "
-            f"  UNION "
-            f"  SELECT es.user_id FROM expense_splits es "
-            f"  JOIN expenses e ON e.id = es.expense_id WHERE e.{exp_filter}"
-            f")",
-            exp_params_single + exp_params_single,
-        ).fetchall()
+        if trip_id:
+            users = conn.execute(
+                f"SELECT DISTINCT u.id, COALESCE(tp.alias, u.display_name) AS display_name "
+                f"FROM users u "
+                f"LEFT JOIN trip_participants tp ON tp.user_id = u.id AND tp.trip_id = ? "
+                f"WHERE u.id IN ("
+                f"  SELECT paid_by_user_id FROM expenses WHERE {exp_filter} "
+                f"  UNION "
+                f"  SELECT es.user_id FROM expense_splits es "
+                f"  JOIN expenses e ON e.id = es.expense_id WHERE e.{exp_filter}"
+                f")",
+                (trip_id,) + exp_params_single + exp_params_single,
+            ).fetchall()
+        else:
+            users = conn.execute(
+                f"SELECT DISTINCT u.id, u.display_name FROM users u "
+                f"WHERE u.id IN ("
+                f"  SELECT paid_by_user_id FROM expenses WHERE {exp_filter} "
+                f"  UNION "
+                f"  SELECT es.user_id FROM expense_splits es "
+                f"  JOIN expenses e ON e.id = es.expense_id WHERE e.{exp_filter}"
+                f")",
+                exp_params_single + exp_params_single,
+            ).fetchall()
 
         return {
             "paid": {r["user_id"]: r["total"] for r in paid},
@@ -580,10 +666,13 @@ def get_settlements_for_trip(group_chat_id: str, trip_id: Optional[int] = None) 
         where = " AND ".join(conditions)
         rows = conn.execute(
             f"SELECT s.id, s.amount_sgd, s.created_at, "
-            f"fu.display_name AS from_name, tu.display_name AS to_name "
+            f"COALESCE(ftp.alias, fu.display_name) AS from_name, "
+            f"COALESCE(ttp.alias, tu.display_name) AS to_name "
             f"FROM settlements s "
             f"JOIN users fu ON fu.id = s.from_user_id "
             f"JOIN users tu ON tu.id = s.to_user_id "
+            f"LEFT JOIN trip_participants ftp ON ftp.user_id = s.from_user_id AND ftp.trip_id = s.trip_id "
+            f"LEFT JOIN trip_participants ttp ON ttp.user_id = s.to_user_id AND ttp.trip_id = s.trip_id "
             f"WHERE {where} ORDER BY s.created_at DESC",
             params,
         ).fetchall()
@@ -803,20 +892,90 @@ def add_trip_participants(trip_id: int, user_ids: list) -> None:
 
 
 def get_trip_participants(trip_id: int) -> list:
-    """Return all users participating in a trip."""
+    """Return all users participating in a trip, using their trip-specific alias if set."""
     conn = get_connection()
     try:
         rows = conn.execute(
             """
-            SELECT u.id, u.telegram_id, u.display_name, u.is_guest
+            SELECT u.id, u.telegram_id, COALESCE(tp.alias, u.display_name) AS display_name, u.is_guest
             FROM trip_participants tp
             JOIN users u ON u.id = tp.user_id
             WHERE tp.trip_id = ?
-            ORDER BY u.is_guest, u.display_name
+            ORDER BY u.is_guest, COALESCE(tp.alias, u.display_name)
             """,
             (trip_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_personal_stats(group_chat_id: str, user_id: int, trip_id: Optional[int] = None) -> dict:
+    """Return personal spending stats for a user scoped to a group/trip."""
+    conn = get_connection()
+    try:
+        gid = str(group_chat_id)
+        exp_filter = "group_chat_id = ? AND trip_id = ?" if trip_id else "group_chat_id = ?"
+        exp_params = (gid, trip_id) if trip_id else (gid,)
+        stl_filter = "group_chat_id = ? AND trip_id = ?" if trip_id else "group_chat_id = ?"
+        stl_params = (gid, trip_id) if trip_id else (gid,)
+
+        paid_row = conn.execute(
+            f"SELECT COALESCE(SUM(amount_sgd), 0) AS total, COUNT(*) AS cnt "
+            f"FROM expenses WHERE paid_by_user_id = ? AND {exp_filter}",
+            (user_id,) + exp_params,
+        ).fetchone()
+
+        owed_row = conn.execute(
+            f"SELECT COALESCE(SUM(es.amount_sgd), 0) AS total "
+            f"FROM expense_splits es JOIN expenses e ON e.id = es.expense_id "
+            f"WHERE es.user_id = ? AND e.{exp_filter}",
+            (user_id,) + exp_params,
+        ).fetchone()
+
+        sent_row = conn.execute(
+            f"SELECT COALESCE(SUM(amount_sgd), 0) AS total FROM settlements "
+            f"WHERE from_user_id = ? AND {stl_filter}",
+            (user_id,) + stl_params,
+        ).fetchone()
+
+        received_row = conn.execute(
+            f"SELECT COALESCE(SUM(amount_sgd), 0) AS total FROM settlements "
+            f"WHERE to_user_id = ? AND {stl_filter}",
+            (user_id,) + stl_params,
+        ).fetchone()
+
+        category_rows = conn.execute(
+            f"SELECT e.category, COALESCE(SUM(es.amount_sgd), 0) AS total "
+            f"FROM expense_splits es JOIN expenses e ON e.id = es.expense_id "
+            f"WHERE es.user_id = ? AND e.{exp_filter} "
+            f"GROUP BY e.category ORDER BY total DESC",
+            (user_id,) + exp_params,
+        ).fetchall()
+
+        biggest_row = conn.execute(
+            f"SELECT description, amount_sgd, category FROM expenses "
+            f"WHERE paid_by_user_id = ? AND {exp_filter} "
+            f"ORDER BY amount_sgd DESC LIMIT 1",
+            (user_id,) + exp_params,
+        ).fetchone()
+
+        total_paid = paid_row["total"]
+        total_owed = owed_row["total"]
+        total_sent = sent_row["total"]
+        total_received = received_row["total"]
+        net = total_paid - total_owed + total_sent - total_received
+
+        return {
+            "total_paid": total_paid,
+            "expenses_count": paid_row["cnt"],
+            "total_owed": total_owed,
+            "total_sent": total_sent,
+            "total_received": total_received,
+            "net": net,
+            "by_category": [dict(r) for r in category_rows],
+            "biggest_expense": dict(biggest_row) if biggest_row else None,
+        }
     finally:
         conn.close()
 
@@ -826,9 +985,10 @@ def get_expenses_for_trip(trip_id: int) -> list:
     try:
         rows = conn.execute(
             """
-            SELECT e.*, u.display_name AS paid_by_name
+            SELECT e.*, COALESCE(tp.alias, u.display_name) AS paid_by_name
             FROM expenses e
             JOIN users u ON u.id = e.paid_by_user_id
+            LEFT JOIN trip_participants tp ON tp.user_id = e.paid_by_user_id AND tp.trip_id = e.trip_id
             WHERE e.trip_id = ?
             ORDER BY e.created_at ASC
             """,

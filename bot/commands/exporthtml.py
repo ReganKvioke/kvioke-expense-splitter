@@ -1,6 +1,7 @@
 """
 /exporthtml — Generate a self-contained HTML expense dashboard and send as a file.
 """
+import html
 import io
 import json
 import logging
@@ -114,7 +115,7 @@ def _build_payload(group_chat_id: str) -> dict:
 def _render_html(payload: dict) -> str:
     """Render the self-contained HTML dashboard from the payload dict."""
     json_data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
-    trip_name = payload["trip"]["name"]
+    trip_name = html.escape(payload["trip"]["name"])
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -269,6 +270,7 @@ footer{{text-align:center;color:#9ca3af;font-size:11px;margin-top:16px;padding-b
 <script>
 const PALETTE = ['#6366f1','#f43f5e','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#ef4444','#84cc16'];
 const fmt = n => 'SGD ' + n.toFixed(2);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 // Header
 document.getElementById('trip-name').textContent = DATA.trip.name;
@@ -308,7 +310,7 @@ if (DATA.balances.net.length === 0) {{
   balList.innerHTML = DATA.balances.net.map(b => {{
     const cls = b.amount > 0.005 ? 'bal-pos' : b.amount < -0.005 ? 'bal-neg' : 'bal-zero';
     const sign = b.amount > 0.005 ? '+ ' : '';
-    return `<li><span class="bal-name">${{b.name}}</span><span class="bal-amt ${{cls}}">${{sign}}${{fmt(b.amount)}}</span></li>`;
+    return `<li><span class="bal-name">${{esc(b.name)}}</span><span class="bal-amt ${{cls}}">${{sign}}${{fmt(b.amount)}}</span></li>`;
   }}).join('');
 }}
 
@@ -317,7 +319,7 @@ if (DATA.balances.transfers.length === 0) {{
   tfList.innerHTML = '<li style="color:#9ca3af">All settled up! 🎉</li>';
 }} else {{
   tfList.innerHTML = DATA.balances.transfers.map(t =>
-    `<li><strong>${{t.from}}</strong><span class="arrow">→</span><strong>${{t.to}}</strong><span class="tf-amt">${{fmt(t.amount)}}</span></li>`
+    `<li><strong>${{esc(t.from)}}</strong><span class="arrow">→</span><strong>${{esc(t.to)}}</strong><span class="tf-amt">${{fmt(t.amount)}}</span></li>`
   ).join('');
 }}
 
@@ -392,13 +394,13 @@ function renderExpenses() {{
     empty.style.display = 'none';
     tbody.innerHTML = filtered.map(e =>
       `<tr>
-        <td style="white-space:nowrap;color:#6b7280">${{e.date}}</td>
-        <td>${{e.description}}</td>
-        <td><span class="tag">${{e.category}}</span></td>
-        <td style="text-align:right;font-variant-numeric:tabular-nums">${{e.amount_fmt}}</td>
+        <td style="white-space:nowrap;color:#6b7280">${{esc(e.date)}}</td>
+        <td>${{esc(e.description)}}</td>
+        <td><span class="tag">${{esc(e.category)}}</span></td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">${{esc(e.amount_fmt)}}</td>
         <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${{fmt(e.amount_sgd)}}</td>
-        <td>${{e.paid_by}}</td>
-        <td style="color:#9ca3af;font-size:12px">${{e.split}}</td>
+        <td>${{esc(e.paid_by)}}</td>
+        <td style="color:#9ca3af;font-size:12px">${{esc(e.split)}}</td>
       </tr>`
     ).join('');
   }}
@@ -432,9 +434,9 @@ if (DATA.settlements.length === 0) {{
 }} else {{
   stlTbody.innerHTML = DATA.settlements.map(s =>
     `<tr>
-      <td style="white-space:nowrap;color:#6b7280">${{s.date}}</td>
-      <td><strong>${{s.from_name}}</strong></td>
-      <td><strong>${{s.to_name}}</strong></td>
+      <td style="white-space:nowrap;color:#6b7280">${{esc(s.date)}}</td>
+      <td><strong>${{esc(s.from_name)}}</strong></td>
+      <td><strong>${{esc(s.to_name)}}</strong></td>
       <td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${{fmt(s.amount_sgd)}}</td>
     </tr>`
   ).join('');

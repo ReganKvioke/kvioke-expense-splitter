@@ -1,0 +1,606 @@
+================================================================================
+  JAPAN TRIP 2026 — BOT LOGIC VERIFICATION PLAYBOOK
+  Trip dates : Apr 14–20, 2026 (7 days)
+  Participants: Regan (admin), Brandeline, Alice
+  Default currency: JPY
+  Exchange rates used in this document (live rates will differ slightly):
+    1 SGD = 111 JPY  →  1 JPY ≈ SGD 0.009009
+    1 USD = 1.35 SGD
+================================================================================
+
+All JPY amounts below have been chosen to divide cleanly by 3 at this rate
+(i.e. SGD values are exact multiples of the number of participants) so the
+expected balance math is precise and verifiable.
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 0 — PRE-TRIP SETUP
+──────────────────────────────────────────────────────────────────────────────
+
+Step 0.1  Each person authenticates
+  Regan      : /start <password>        → "Welcome, Regan! You're all set."
+  Brandeline : /start <password>        → "Welcome, Brandeline! You're all set."
+  Alice      : /start <password>        → "Welcome, Alice! You're all set."
+
+Step 0.2  Start the trip (Regan runs this)
+  Command : /tripstart Japan 2026 JPY
+  Flow    : Bot shows participant selection keyboard.
+            Toggle ON: Brandeline, Alice  (Regan pre-selected)
+            Tap "Start Trip"
+  Expected: "🗺️ Trip Japan 2026 started! Participants: Regan, Brandeline, Alice.
+             Default currency: JPY."
+
+VERIFY: /tripsummary → should list "Japan 2026" as active trip with 0 expenses.
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 1 — DAY 1 (Apr 14) ARRIVAL IN TOKYO
+──────────────────────────────────────────────────────────────────────────────
+
+--- EXPENSE 01 ---
+Who pays : Regan
+What     : Narita Express to Shinjuku
+Command  : /quickadd 3330 JPY transport Narita Express to Shinjuku
+SGD value: 3,330 ÷ 111 = SGD 30.00
+Split    : Equal among 3 → SGD 10.00 each (Regan, Brandeline, Alice)
+Expected : "✅ Added: (🚌 Transport) Narita Express to Shinjuku -- 3330 JPY"
+
+--- EXPENSE 02 ---
+Who pays : Brandeline
+What     : Welcome dinner at izakaya
+Command  : /add  (full guided flow)
+  Amount      : 9990 JPY   → SGD 90.00
+  Payer       : [tap "Me"  — Brandeline is running this]
+  Category    : Food
+  Description : Welcome dinner at izakaya Yurakucho
+  Split       : Equal
+  Confirm     : ✅ Confirm
+  Summary shown before confirm:
+    "Paid by: Brandeline
+     Amount: 9990 JPY (SGD 90.00)
+     Category: 🍜 Food
+     Description: Welcome dinner at izakaya Yurakucho
+     Split: Equal
+     Split equally among:
+       • Regan: SGD 30.00
+       • Brandeline: SGD 30.00
+       • Alice: SGD 30.00"
+Expected: "✅ Expense saved! · 📍 Japan 2026"
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 2 — DAY 2 (Apr 15) TOKYO SIGHTSEEING
+──────────────────────────────────────────────────────────────────────────────
+
+--- EXPENSE 03 ---
+Who pays : Alice
+What     : 7-Eleven breakfast
+Command  : /quickadd 1332 JPY food 7-Eleven breakfast and coffees
+SGD value: 1,332 ÷ 111 = SGD 12.00
+Split    : Equal among 3 → SGD 4.00 each
+Expected : "✅ Added: (🍜 Food) 7-Eleven breakfast and coffees -- 1332 JPY"
+
+--- EXPENSE 04 ---
+Who pays : Regan
+What     : TeamLab Planets tickets (all 3)
+Command  : /add
+  Amount      : 13320 JPY  → SGD 120.00
+  Payer       : Me (Regan)
+  Category    : Activities
+  Description : TeamLab Planets tickets
+  Split       : Equal
+  Summary check: SGD 40.00 each (Regan, Brandeline, Alice)
+Expected : "✅ Expense saved!"
+
+--- EXPENSE 05 (MISTAKE — will be fixed with /undo) ---
+Who pays : Regan
+What     : Vending machine drinks — accidentally entered WRONG CATEGORY
+Command  : /add
+  Amount      : 2220 JPY   → SGD 20.00
+  Payer       : Me (Regan)
+  Category    : Transport   ← WRONG! Should be Food
+  Description : Vending machine drinks Harajuku
+  Split       : Equal
+  Confirm     : ✅ Confirm
+Expected : "✅ Expense saved!"
+
+--- FEATURE TEST: /edit ---
+Regan realises the category was wrong. Fix it without delete-and-re-add.
+Command : /edit
+Flow    : Bot shows paginated expense list.
+          Select "Vending machine drinks Harajuku"
+          Bot: "What do you want to change? 📝 Description  🏷️ Category  ❌ Cancel"
+          Tap: 🏷️ Category
+          Bot shows category keyboard → select "Food"
+Expected: "✅ Updated."
+
+VERIFY: /summary category → "Vending machine drinks" should now appear under Food,
+        NOT under Transport.
+
+--- EXPENSE 06 ---
+Who pays : Regan
+What     : Shibuya Sky observation deck (Regan and Brandeline only — Alice skips)
+Command  : /add
+  Amount      : 5550 JPY   → SGD 50.00
+  Payer       : Me (Regan)
+  Category    : Activities
+  Description : Shibuya Sky observation deck
+  Split       : Custom
+  Input       : @Regan 25, @Brandeline 25
+  Total check : 25.00 + 25.00 = SGD 50.00 ✓  (Alice not charged)
+  Summary check:
+    "Shares:
+       • Regan: SGD 25.00
+       • Brandeline: SGD 25.00"
+Expected : "✅ Expense saved!"
+
+NOTE: Alice's owed total does NOT change from this expense. Verify via /balances.
+
+--- EXPENSE 07 ---
+Who pays : Brandeline
+What     : Ramen dinner (all 3)
+Command  : /quickadd 4440 JPY food Ichiran Ramen dinner Shibuya
+SGD value: 4,440 ÷ 111 = SGD 40.00
+Split    : Equal among 3 → SGD 13.33 / 13.33 / 13.34
+           (Brandeline as payer gets remainder: 13.33 + 0.01 = 13.34)
+Expected : "✅ Added: (🍜 Food) Ichiran Ramen dinner Shibuya -- 4440 JPY"
+
+--- MID-DAY-2 BALANCE CHECK ---
+Command: /balances
+
+Expected net balances (approximate, based on Exp 01–07):
+  paid : Regan 170 (30+120+20+0+0) wait let me recalculate...
+
+  Exp01: Regan pays 30,  owed R+10 B+10 A+10
+  Exp02: Brand pays 90,  owed R+30 B+30 A+30
+  Exp03: Alice pays 12,  owed R+4  B+4  A+4
+  Exp04: Regan pays 120, owed R+40 B+40 A+40
+  Exp05: Regan pays 20,  owed R+6.67 B+6.67 A+6.66  (edited category only, math unchanged)
+  Exp06: Regan pays 50,  owed R+25 B+25 A+0
+  Exp07: Brand pays 40,  owed R+13.33 B+13.34 A+13.33
+
+  paid totals:  Regan=220, Brandeline=130, Alice=12
+  owed totals:
+    Regan    : 10+30+4+40+6.67+25+13.33 = 129
+    Brandeline: 10+30+4+40+6.67+25+13.34 = 129.01
+    Alice    : 10+30+4+40+6.66+0+13.33  = 103.99
+
+  net:
+    Regan      : 220 - 129    = +91.00  (is owed SGD 91.00)
+    Brandeline : 130 - 129.01 = +0.99   (is owed SGD 0.99)
+    Alice      :  12 - 103.99 = -91.99  (owes SGD 91.99)
+
+  (Note: tiny rounding cents accumulate from 20-SGD expense. Totals sum to ~0.)
+
+  Suggested settlement at this point:
+    Alice → Regan      : ~SGD 91.00
+    Alice → Brandeline : ~SGD 0.99
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 3 — DAY 3 (Apr 16) HAKONE DAY TRIP
+──────────────────────────────────────────────────────────────────────────────
+
+--- EXPENSE 08 ---
+Who pays : Regan
+What     : Romancecar Limited Express train
+Command  : /quickadd 6660 JPY transport Romancecar Limited Express to Hakone
+SGD value: 6,660 ÷ 111 = SGD 60.00
+Split    : Equal among 3 → SGD 20.00 each
+
+--- EXPENSE 09 ---
+Who pays : Brandeline
+What     : Hakone Ropeway + Open Air Museum
+Command  : /add
+  Amount      : 3330 JPY   → SGD 30.00
+  Payer       : Me (Brandeline)
+  Category    : Activities
+  Description : Hakone Ropeway and Open Air Museum
+  Split       : Equal → SGD 10.00 each
+
+--- EXPENSE 10 ---
+Who pays : Alice
+What     : Onsen resort dinner
+Command  : /add
+  Amount      : 9990 JPY   → SGD 90.00
+  Payer       : Me (Alice)
+  Category    : Food
+  Description : Kaiseki dinner at Hakone Onsen
+  Split       : Equal → SGD 30.00 each
+
+--- END-OF-DAY-3 BALANCE CHECK ---
+Command: /balances
+
+After Exp 08–10 added to previous totals:
+  paid : Regan=280, Brandeline=160, Alice=102
+  owed :
+    Regan    : 129 + 20+10+30    = 189
+    Brandeline: 129.01 + 20+10+30 = 189.01
+    Alice    : 103.99 + 20+10+30 = 163.99
+
+  net:
+    Regan      : 280 - 189    = +91.00
+    Brandeline : 160 - 189.01 = -29.01  (now owes money)
+    Alice      : 102 - 163.99 = -61.99
+
+  Suggested settlements at end of Day 3:
+    Brandeline → Regan : ~SGD 29.01
+    Alice      → Regan : ~SGD 61.99
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 4 — DAY 4 (Apr 17) OSAKA
+──────────────────────────────────────────────────────────────────────────────
+
+--- EXPENSE 11 ---
+Who pays : Regan
+What     : Shinkansen Tokyo → Osaka (all 3)
+Command  : /add
+  Amount      : 16650 JPY  → SGD 150.00
+  Payer       : Me (Regan)
+  Category    : Transport
+  Description : Shinkansen Nozomi Tokyo to Osaka
+  Split       : Equal → SGD 50.00 each
+
+--- EXPENSE 12 ---
+Who pays : Brandeline
+What     : Dotonbori street food
+Command  : /quickadd 3330 JPY food Dotonbori street food takoyaki
+SGD value: 3,330 ÷ 111 = SGD 30.00
+Split    : Equal → SGD 10.00 each
+
+--- EXPENSE 13 ---
+Who pays : Alice
+What     : Cup Noodles Museum (Alice + Brandeline only)
+Command  : /add
+  Amount      : 2664 JPY   → SGD 24.00
+  Payer       : Me (Alice)
+  Category    : Activities
+  Description : Cup Noodles Museum tickets and exhibits
+  Split       : Custom
+  Input       : @Alice 12, @Brandeline 12
+  Total check : 12.00 + 12.00 = SGD 24.00 ✓  (Regan not charged)
+  Summary check:
+    "Shares:
+       • Alice: SGD 12.00
+       • Brandeline: SGD 12.00"
+
+VERIFY: /balances → Regan's owed total unchanged from this expense.
+
+--- FEATURE TEST: /undo ---
+Brandeline accidentally /quickadd's a duplicate for the same takoyaki.
+Command : /quickadd 3330 JPY food Dotonbori takoyaki duplicate
+Expected: "✅ Added: ..."
+
+Command : /undo
+Bot shows: "Last expense: [Dotonbori takoyaki duplicate · SGD 30.00 · food · paid by Brandeline]
+            ↩️ Undo  ❌ Keep"
+Tap: ↩️ Undo
+Expected: "✅ Deleted. Expense removed."
+
+VERIFY: /balances → balances same as before the duplicate was added.
+VERIFY: /summary  → duplicate entry no longer appears.
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 5 — DAY 5 (Apr 18) KYOTO
+──────────────────────────────────────────────────────────────────────────────
+
+--- EXPENSE 14 ---
+Who pays : Regan
+What     : Kinkakuji (Golden Pavilion) entrance fees
+Command  : /quickadd 1332 JPY activities Kinkakuji entrance tickets
+SGD value: 1,332 ÷ 111 = SGD 12.00
+Split    : Equal → SGD 4.00 each
+
+--- EXPENSE 15 ---
+Who pays : Brandeline
+What     : Nishiki Market food tasting (all 3)
+Command  : /add
+  Amount      : 50 USD      → SGD 67.50  (at 1 USD = 1.35 SGD)
+  Payer       : Me (Brandeline)
+  Category    : Food
+  Description : Nishiki Market tasting wagyu skewers and mochi
+  Split       : Custom
+  Input       : @Regan 22.50, @Brandeline 22.50, @Alice 22.50
+  Total check : 67.50 = 67.50 ✓
+Expected : "✅ Expense saved!"
+
+NOTE: This tests USD input being correctly converted to SGD, then split.
+
+--- SUMMARY CHECK ---
+Command: /summary category
+Expected to see categories listed with totals:
+  - Food         : largest category
+  - Transport    : Narita Express + Romancecar + Shinkansen
+  - Activities   : TeamLab + Shibuya Sky + Hakone + Kinkakuji + Cup Noodles
+  - "Vending machine drinks" should be in Food (not Transport — confirmed from /edit test)
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 6 — DAY 6 (Apr 19) SHOPPING + FAREWELL DINNER
+──────────────────────────────────────────────────────────────────────────────
+
+--- EXPENSE 16 ---
+Who pays : Alice
+What     : Don Quijote group souvenirs
+Command  : /add
+  Amount      : 3996 JPY   → SGD 36.00
+  Payer       : Me (Alice)
+  Category    : Others
+  Description : Don Quijote group souvenirs and snacks
+  Split       : Equal → SGD 12.00 each
+
+--- EXPENSE 17 ---
+Who pays : Regan
+What     : Farewell dinner (all 3)
+Command  : /add
+  Amount      : 40 USD      → SGD 54.00  (at 1 USD = 1.35 SGD)
+  Payer       : Me (Regan)
+  Category    : Food
+  Description : Farewell yakiniku dinner Osaka
+  Split       : Equal → SGD 18.00 each
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 7 — DAY 7 (Apr 20) DEPARTURE
+──────────────────────────────────────────────────────────────────────────────
+
+--- EXPENSE 18 ---
+Who pays : Brandeline
+What     : Airport duty-free snacks and drinks
+Command  : /quickadd 2664 JPY food Airport Kansai duty-free snacks
+SGD value: 2,664 ÷ 111 = SGD 24.00
+Split    : Equal → SGD 8.00 each
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 8 — FINAL BALANCE CALCULATION
+──────────────────────────────────────────────────────────────────────────────
+
+All 18 expenses (Expense 05's duplicate was /undo'd so does not count):
+
+  #   Payer       SGD      Split recipients & shares (SGD)
+  ─── ─────────── ──────── ───────────────────────────────────────────────────
+  01  Regan        30.00   R 10.00  B 10.00  A 10.00
+  02  Brandeline   90.00   R 30.00  B 30.00  A 30.00
+  03  Alice        12.00   R  4.00  B  4.00  A  4.00
+  04  Regan       120.00   R 40.00  B 40.00  A 40.00
+  05  Regan        20.00   R  6.67  B  6.67  A  6.66   ← category edited
+  06  Regan        50.00   R 25.00  B 25.00  A  0.00   ← custom 2-person
+  07  Brandeline   40.00   R 13.33  B 13.34  A 13.33
+  08  Regan        60.00   R 20.00  B 20.00  A 20.00
+  09  Brandeline   30.00   R 10.00  B 10.00  A 10.00
+  10  Alice        90.00   R 30.00  B 30.00  A 30.00
+  11  Regan       150.00   R 50.00  B 50.00  A 50.00
+  12  Brandeline   30.00   R 10.00  B 10.00  A 10.00
+  13  Alice        24.00   R  0.00  B 12.00  A 12.00   ← custom 2-person
+  14  Regan        12.00   R  4.00  B  4.00  A  4.00
+  15  Brandeline   67.50   R 22.50  B 22.50  A 22.50
+  16  Alice        36.00   R 12.00  B 12.00  A 12.00
+  17  Regan        54.00   R 18.00  B 18.00  A 18.00
+  18  Brandeline   24.00   R  8.00  B  8.00  A  8.00
+
+  TOTALS:
+  ─────────────────────────────────────────────────────────────────
+  paid[Regan]      = 30+120+20+50+60+150+12+54          = 496.00
+  paid[Brandeline] = 90+40+30+30+67.50+24               = 281.50
+  paid[Alice]      = 12+90+24+36                         = 162.00
+                                               TOTAL PAID = 939.50
+
+  owed[Regan]      = 10+30+4+40+6.67+25+13.33+20+10+30
+                     +50+10+0+4+22.50+12+18+8           = 313.50
+  owed[Brandeline] = 10+30+4+40+6.67+25+13.34+20+10+30
+                     +50+10+12+4+22.50+12+18+8          = 325.51
+  owed[Alice]      = 10+30+4+40+6.66+0+13.33+20+10+30
+                     +50+10+12+4+22.50+12+18+8          = 300.49
+                                              TOTAL OWED = 939.50 ✓
+
+  NET BALANCES (paid − owed):
+  ─────────────────────────────────────────────────────────────────
+  Regan      :  496.00 − 313.50 = +182.50   (is owed SGD 182.50)
+  Brandeline :  281.50 − 325.51 =  −44.01   (owes SGD 44.01)
+  Alice      :  162.00 − 300.49 = −138.49   (owes SGD 138.49)
+
+  Cross-check: 182.50 − 44.01 − 138.49 = 0.00 ✓
+
+  GREEDY DEBT SIMPLIFICATION (what /balances → Suggested settlements should show):
+  ─────────────────────────────────────────────────────────────────
+  Step 1: Biggest debtor = Alice (138.49), biggest creditor = Regan (182.50)
+          Transfer: Alice → Regan  SGD 138.49
+          Regan remaining credit: 182.50 − 138.49 = 44.01
+          Alice remaining debt: 0
+
+  Step 2: Brandeline (44.01) → Regan (44.01)
+          Transfer: Brandeline → Regan  SGD 44.01
+          All settled.
+
+  EXPECTED /balances OUTPUT:
+  ─────────────────────────────────────────────────────────────────
+  "💰 Japan 2026 — Balances:
+
+  🔴 Alice owes SGD 138.49 (owes the most)
+  🟡 Brandeline owes SGD 44.01
+  🟢 Regan is owed SGD 182.50
+
+  Suggested settlements:
+  • Alice → Regan: SGD 138.49
+  • Brandeline → Regan: SGD 44.01"
+
+  (Exact values depend on live exchange rates for the 2 USD expenses. The
+  structure — Regan owed, Alice and Brandeline owe — should hold regardless.)
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 9 — SETTLEMENT TESTS
+──────────────────────────────────────────────────────────────────────────────
+
+--- TEST A: Legacy settle with WRONG recipient (should fail after our fix) ---
+
+Brandeline tries to pay Alice instead of Regan.
+Command : /settle @Alice 44.01
+Expected: "❌ You don't owe @Alice in this trip.
+           You should settle with: @Regan.
+           Use /settle to pick interactively."
+
+VERIFY: /balances remains unchanged (no settlement recorded).
+
+--- TEST B: Alice settles via interactive flow ---
+
+Alice runs /settle (no args):
+Expected keyboard:
+  "💳 Who are you settling with? (Trip: Japan 2026)
+   👤 Regan (you owe SGD 138.49)
+   ❌ Cancel"
+
+Alice taps 👤 Regan:
+  "Settle SGD 138.49 with Regan?
+   ✅ Confirm SGD 138.49   ✏️ Custom amount   ❌ Cancel"
+
+Alice taps ✅ Confirm:
+Expected: "✅ Recorded: Alice paid Regan SGD 138.49."
+
+--- TEST C: Brandeline settles via legacy one-liner ---
+
+Command : /settle @Regan 44.01
+Expected: "✅ Recorded: Brandeline paid Regan SGD 44.01."
+
+--- TEST D: Verify post-settlement balances ---
+
+Command: /balances
+Expected: "✅ Everyone is settled up!"
+  (All net values should be ~0.00 or within rounding threshold of 0.01)
+
+--- TEST E: View settlement history ---
+
+Command: /settlements
+Expected output:
+  "📋 Settlements — Japan 2026:
+   • <date>  Alice → Regan         SGD 138.49
+   • <date>  Brandeline → Regan    SGD 44.01
+   Total settled: SGD 182.50"
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 10 — ADDITIONAL FEATURE CHECKS
+──────────────────────────────────────────────────────────────────────────────
+
+--- /summary tests ---
+
+Command: /summary today
+Expected: shows only expenses logged today (useful during the trip each evening)
+
+Command: /summary week
+Expected: shows all 18 expenses (entire trip was within 7 days)
+
+Command: /summary month
+Expected: same as /summary week for this trip
+
+Command: /summary category
+Expected summary sorted by total SGD descending, e.g.:
+  Food         : SGD ???  (largest — most meals)
+  Transport    : SGD ???
+  Activities   : SGD ???
+  Others       : SGD 36.00  (Don Quijote only)
+
+--- /tripsummary test ---
+
+Command: /tripsummary Japan 2026
+Expected: Full paginated expense list with:
+  - 18 rows (undo removed the duplicate)
+  - Each row: date, description, SGD amount, who paid, category
+  - Total at bottom matching TOTAL PAID (SGD 939.50 approx)
+
+--- /delete test (intentional) ---
+
+Regan decides to remove the vending machine drinks expense (they found the
+receipt and it was personal, not shared).
+Command : /delete
+Flow    : Select "Vending machine drinks Harajuku" from list
+          Tap ✅ Confirm Delete
+Expected: "✅ Deleted."
+
+VERIFY: /balances updates accordingly (Regan's net decreases by ~6.67,
+        Brandeline's and Alice's owed each decrease by ~6.67).
+        Run /balances and confirm the net sums still equal 0.
+
+--- /tripend ---
+
+Command: /tripend
+Expected: "🏁 Trip Japan 2026 ended. Use /tripsummary to view the full summary."
+
+VERIFY: /add after /tripend → "⛔ No active trip. Use /tripstart to begin."
+VERIFY: /balances after /tripend → same message.
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 11 — ERROR / EDGE CASE TESTS
+──────────────────────────────────────────────────────────────────────────────
+
+Test E1 — Unauthenticated user
+  New user sends /balances without /start
+  Expected: "⛔ You don't have access. Use /start <password> to authenticate."
+
+Test E2 — /add before /tripstart
+  Run /add with no active trip.
+  Expected: "⛔ No active trip. Use /tripstart <name> [currency] to begin."
+
+Test E3 — Negative amount
+  /quickadd -50 JPY food test
+  Expected: "❌ Amount must be positive."
+
+Test E4 — Unknown currency
+  /add → enter "500 XYZ"
+  Expected: "❌ Unsupported currency XYZ."
+
+Test E5 — Custom split total mismatch
+  /add → amount 100 SGD → custom split → "@Regan 40, @Alice 40"  (= 80, not 100)
+  Expected: "❌ Split amounts (SGD 80.00) don't match total (SGD 100.00)."
+
+Test E6 — /settle over-amount (legacy path)
+  Alice has 0 balance (all settled). Tries: /settle @Regan 50
+  Expected: "❌ You have no outstanding balance to settle in this trip."
+
+Test E7 — /settle self
+  Regan tries: /settle @Regan 10
+  Expected: "❌ You cannot settle with yourself."
+
+Test E8 — /undo with no expenses in trip
+  Start a new trip, immediately /undo
+  Expected: "No expenses to undo in this trip."
+
+Test E9 — Conversation timeout
+  Start /add, enter amount, then wait >5 minutes without responding
+  Expected: "⏱️ Expense entry timed out after 5 minutes. Use /add to start again."
+
+──────────────────────────────────────────────────────────────────────────────
+SECTION 12 — VERIFICATION CHECKLIST
+──────────────────────────────────────────────────────────────────────────────
+
+Feature                          Tested In        Pass/Fail  Notes
+──────────────────────────────── ──────────────── ─────────  ─────────────────
+/start password auth             Sec 0.1          [ ]
+/tripstart + participant select  Sec 0.2          [ ]
+/quickadd (JPY default)          Exp 01,07,08,12  [ ]
+/quickadd (explicit JPY)         Exp 03,14,18     [ ]
+/add equal split 3-way           Exp 02,04,09,10  [ ]
+/add equal split with payer      Exp 11,17        [ ]
+/add custom split 2-person       Exp 06,13        [ ]
+/add custom split 3-person       Exp 15           [ ]
+/add USD currency conversion     Exp 15,17        [ ]
+/edit category change            Sec 2 (Exp 05)   [ ]
+/undo last expense               Sec 4 duplicate  [ ]
+/balances mid-trip               Sec 2,3          [ ]
+/balances post-settlement        Test D           [ ]
+/summary today                   Sec 10           [ ]
+/summary week                    Sec 10           [ ]
+/summary category                Sec 5,10         [ ]
+/delete intentional              Sec 10           [ ]
+/settle interactive flow         Test B           [ ]
+/settle legacy correct person    Test C           [ ]
+/settle legacy WRONG person      Test A           [ ]  new validation
+/settle over-amount blocked      Test E6          [ ]
+/settle self blocked             Test E7          [ ]
+/settlements history view        Test E           [ ]
+/tripsummary full list           Sec 10           [ ]
+/tripend                         Sec 10           [ ]
+Commands blocked after tripend   Sec 10           [ ]
+Unauthenticated block            Test E1          [ ]
+/add blocked before trip         Test E2          [ ]
+Negative amount rejected         Test E3          [ ]
+Unknown currency rejected        Test E4          [ ]
+Custom split total mismatch      Test E5          [ ]
+/undo empty trip                 Test E8          [ ]
+Conversation timeout             Test E9          [ ]
+
+──────────────────────────────────────────────────────────────────────────────
+END OF PLAYBOOK
+================================================================================

@@ -20,7 +20,7 @@ from bot.utils.format import fmt_sgd, fmt_amount, fmt_datetime_local, fmt_catego
 logger = logging.getLogger(__name__)
 
 # Conversation states for /tripstart
-(TS_PICK, TS_GUEST_NAME) = range(2)
+(TS_PICK, TS_GUEST_NAME, TS_ALIAS_PICK, TS_ALIAS_INPUT) = range(4)
 
 
 def _ts_participant_keyboard(all_users: list, selected_ids: set) -> InlineKeyboardMarkup:
@@ -43,6 +43,23 @@ def _ts_participant_keyboard(all_users: list, selected_ids: set) -> InlineKeyboa
         )
     ])
     buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="tspart:cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def _ts_alias_keyboard(participants: list, aliases: dict) -> InlineKeyboardMarkup:
+    """Keyboard showing each participant; label shows current alias if set."""
+    buttons = []
+    for u in participants:
+        uid = u["id"]
+        current = aliases.get(uid)
+        if current:
+            label = f"✏️ {current}"
+        elif u.get("is_guest"):
+            label = f"🧳 {u['display_name']}"
+        else:
+            label = f"@{u['display_name']}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"tsalias:pick:{uid}")])
+    buttons.append([InlineKeyboardButton("✅ Done", callback_data="tsalias:done")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -133,24 +150,36 @@ async def handle_ts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await run_in_executor(queries.add_trip_participants, trip_id, list(selected_ids))
 
         all_users = context.user_data.get("_ts_all_users", [])
-        participants = [u["display_name"] for u in all_users if u["id"] in selected_ids]
-        context.user_data.clear()
+        participants = [u for u in all_users if u["id"] in selected_ids]
+        participant_names = [u["display_name"] for u in participants]
 
-        await query.edit_message_text(
-            f"✈️ Trip *{name}* started!\n"
-            f"Default currency: *{currency}*\n"
-            f"Participants ({len(participants)}): {', '.join(participants)}\n\n"
-            f"/quickadd will now use {currency} by default.\n"
-            "Use /tripend when the trip is over.",
-            parse_mode="Markdown",
-        )
         logger.info(
             "Trip %d '%s' started in group %s with %d participants",
             trip_id, name, group_chat_id, len(participants),
         )
-        return ConversationHandler.END
+
+        # Transition to optional alias-setting step
+        context.user_data["_ts_trip_id"] = trip_id
+        context.user_data["_ts_participants"] = participants
+        context.user_data["_ts_aliases"] = {}
+        # Clean up selection state no longer needed
+        context.user_data.pop("_ts_all_users", None)
+        context.user_data.pop("_ts_selected_ids", None)
+
+        await query.edit_message_text(
+            f"✈️ Trip *{name}* started!\n"
+            f"Default currency: *{currency}*\n"
+            f"Participants ({len(participants)}): {', '.join(participant_names)}\n\n"
+            "✏️ *Optional:* Set short display names for participants.\n"
+            "Tap a name to set an alias, or tap *Done* to skip.",
+            reply_markup=_ts_alias_keyboard(participants, {}),
+            parse_mode="Markdown",
+        )
+        return TS_ALIAS_PICK
 
     if action == "toggle":
+        if len(parts) < 3:
+            return TS_PICK
         user_id = int(parts[2])
         selected_ids = context.user_data.get("_ts_selected_ids", set())
         if user_id in selected_ids:
@@ -193,6 +222,115 @@ async def handle_ts_guest_name(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="Markdown",
     )
     return TS_PICK
+
+
+async def handle_ts_alias_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle taps on the alias-setting keyboard."""
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split(":", 2)
+    action = parts[1]
+
+    if action == "done":
+        # Persist any aliases that were set (skip any that conflict in DB)
+        aliases = context.user_data.get("_ts_aliases", {})
+        trip_id = context.user_data.get("_ts_trip_id")
+        saved = 0
+        for user_id, alias in aliases.items():
+            try:
+                await run_in_executor(queries.set_trip_alias, trip_id, user_id, alias)
+                saved += 1
+            except ValueError:
+                logger.warning("Alias '%s' already taken; skipped for user %d", alias, user_id)
+        trip_name = context.user_data.get("_ts_name", "")
+        currency = context.user_data.get("_ts_currency", "SGD")
+        context.user_data.clear()
+        alias_note = f"\n\n{saved} alias{'es' if saved != 1 else ''} saved." if saved else ""
+        await query.edit_message_text(
+            f"✅ All set! /quickadd will use *{currency}* by default.\n"
+            f"Use /tripend when the trip is over.{alias_note}",
+            parse_mode="Markdown",
+        )
+        return ConversationHandler.END
+
+    if action == "pick" and len(parts) == 3:
+        user_id = int(parts[2])
+        context.user_data["_ts_aliasing_uid"] = user_id
+
+        participants = context.user_data.get("_ts_participants", [])
+        user = next((u for u in participants if u["id"] == user_id), None)
+        aliases = context.user_data.get("_ts_aliases", {})
+        current = aliases.get(user_id)
+
+        if user:
+            base = current or (f"@{user['display_name']}" if not user.get("is_guest") else user["display_name"])
+        else:
+            base = current or str(user_id)
+
+        await query.edit_message_text(
+            f"Enter a short alias for *{base}*:\n\n"
+            "Tap *← Back* to cancel.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("← Back", callback_data="tsalias:back")]
+            ]),
+            parse_mode="Markdown",
+        )
+        return TS_ALIAS_INPUT
+
+    return TS_ALIAS_PICK
+
+
+async def handle_ts_alias_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle text typed as an alias."""
+    alias = update.message.text.strip()
+    if not alias:
+        await update.message.reply_text("❌ Alias cannot be empty. Try again.")
+        return TS_ALIAS_INPUT
+
+    user_id = context.user_data.get("_ts_aliasing_uid")
+    aliases = context.user_data.get("_ts_aliases", {})
+
+    # Check uniqueness within the current session (case-insensitive, other participants)
+    alias_lower = alias.lower()
+    for uid, existing in aliases.items():
+        if uid != user_id and existing.lower() == alias_lower:
+            await update.message.reply_text(
+                f"❌ *{alias}* is already used by another participant in this trip.\n"
+                "Please choose a different alias.",
+                parse_mode="Markdown",
+            )
+            return TS_ALIAS_INPUT
+
+    if user_id is not None:
+        aliases[user_id] = alias
+        context.user_data["_ts_aliases"] = aliases
+
+    participants = context.user_data.get("_ts_participants", [])
+
+    await update.message.reply_text(
+        f"✅ Alias *{alias}* saved!\n\n"
+        "✏️ Set aliases for others, or tap *Done*.",
+        reply_markup=_ts_alias_keyboard(participants, aliases),
+        parse_mode="Markdown",
+    )
+    return TS_ALIAS_PICK
+
+
+async def handle_ts_alias_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle ← Back tap — return to alias selection without saving."""
+    query = update.callback_query
+    await query.answer()
+
+    participants = context.user_data.get("_ts_participants", [])
+    aliases = context.user_data.get("_ts_aliases", {})
+
+    await query.edit_message_text(
+        "✏️ Set short display names for participants, or tap *Done* to skip.",
+        reply_markup=_ts_alias_keyboard(participants, aliases),
+        parse_mode="Markdown",
+    )
+    return TS_ALIAS_PICK
 
 
 async def _handle_ts_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -245,6 +383,14 @@ def build_tripstart_handler() -> ConversationHandler:
             TS_PICK: [CallbackQueryHandler(handle_ts_callback, pattern=r"^tspart:")],
             TS_GUEST_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ts_guest_name)
+            ],
+            TS_ALIAS_PICK: [
+                CallbackQueryHandler(handle_ts_alias_pick, pattern=r"^tsalias:(done|pick:\d+)$"),
+                CallbackQueryHandler(handle_ts_alias_back, pattern=r"^tsalias:back$"),
+            ],
+            TS_ALIAS_INPUT: [
+                CallbackQueryHandler(handle_ts_alias_back, pattern=r"^tsalias:back$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ts_alias_input),
             ],
             ConversationHandler.TIMEOUT: [
                 MessageHandler(filters.ALL, _handle_ts_timeout),

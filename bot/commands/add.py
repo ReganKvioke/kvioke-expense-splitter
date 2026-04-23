@@ -49,6 +49,10 @@ KEY_DESCRIPTION = "description"
 KEY_SPLIT_METHOD = "split_method"
 KEY_CUSTOM_SPLITS = "custom_splits"  # list of (user_id, amount_sgd)
 
+# Persisted across conversations (not cleared between /add calls)
+_KEY_LAST_PAYER_DB_ID = "_last_payer_db_id"
+_KEY_LAST_PAYER_NAME = "_last_payer_name"
+
 
 def _category_keyboard() -> InlineKeyboardMarkup:
     buttons = [
@@ -57,6 +61,15 @@ def _category_keyboard() -> InlineKeyboardMarkup:
     ]
     rows = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
     return InlineKeyboardMarkup(rows)
+
+
+def _payer_shortcut_keyboard(last_payer_name: str) -> InlineKeyboardMarkup:
+    """Compact keyboard shown when a previous payer is remembered."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ {last_payer_name} (same as last)", callback_data="payer:last")],
+        [InlineKeyboardButton("👥 Change payer", callback_data="payer:change")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="payer:cancel")],
+    ])
 
 
 def _payer_keyboard(other_members: list) -> InlineKeyboardMarkup:
@@ -86,6 +99,25 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("❌ Cancel", callback_data="confirm:no"),
         ]
     ])
+
+
+def _post_save_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💸 Add another", callback_data="post_add:add_another"),
+            InlineKeyboardButton("💰 View balances", callback_data="post_add:balances"),
+        ]
+    ])
+
+
+def _preserve_last_payer(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear user_data while keeping the last payer keys intact."""
+    last_payer_db_id = context.user_data.get(_KEY_LAST_PAYER_DB_ID)
+    last_payer_name = context.user_data.get(_KEY_LAST_PAYER_NAME)
+    context.user_data.clear()
+    if last_payer_db_id:
+        context.user_data[_KEY_LAST_PAYER_DB_ID] = last_payer_db_id
+        context.user_data[_KEY_LAST_PAYER_NAME] = last_payer_name
 
 
 def _build_summary(data: dict, users_by_id: dict | None = None) -> str:
@@ -119,12 +151,19 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ConversationHandler.END
 
+    trip_currency = active_trip.get("default_currency", "SGD")
+    last_payer_db_id = context.user_data.get(_KEY_LAST_PAYER_DB_ID)
+    last_payer_name = context.user_data.get(_KEY_LAST_PAYER_NAME)
     context.user_data.clear()
     context.user_data["_trip_id"] = active_trip["id"]
+    context.user_data["_trip_currency"] = trip_currency
+    if last_payer_db_id:
+        context.user_data[_KEY_LAST_PAYER_DB_ID] = last_payer_db_id
+        context.user_data[_KEY_LAST_PAYER_NAME] = last_payer_name
     await update.message.reply_text(
         f"💸 Trip: *{active_trip['name']}*\n\n"
-        "How much did you spend? (e.g. `50 USD`, `30 SGD`, `5000 JPY`)\n"
-        "Currency defaults to SGD if omitted.\n\n"
+        f"How much did you spend? (e.g. `50 USD`, `30 {trip_currency}`, `5000 JPY`)\n"
+        f"Currency defaults to {trip_currency} if omitted.\n\n"
         "Send /cancel to abort.",
         parse_mode="Markdown",
     )
@@ -145,7 +184,8 @@ async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text("❌ Amount must be positive. Try again.")
         return STATE_AMOUNT
 
-    currency = parts[1].upper() if len(parts) > 1 else "SGD"
+    trip_currency = context.user_data.get("_trip_currency", "SGD")
+    currency = parts[1].upper() if len(parts) > 1 else trip_currency
     if currency not in SUPPORTED_CURRENCIES:
         await update.message.reply_text(
             f"❌ Unsupported currency `{currency}`. Supported: {', '.join(sorted(SUPPORTED_CURRENCIES))}",
@@ -167,15 +207,30 @@ async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data[KEY_EXCHANGE_RATE] = exchange_rate
 
     current_tg_id = str(update.effective_user.id)
-    all_users = await run_in_executor(queries.get_all_known_users, current_tg_id)
+    trip_id = context.user_data.get("_trip_id")
+    if trip_id:
+        all_users = await run_in_executor(queries.get_trip_participants, trip_id)
+        # Exclude the current user (they are the "Me" option)
+        all_users = [u for u in all_users if u.get("telegram_id") != current_tg_id]
+    else:
+        all_users = await run_in_executor(queries.get_all_known_users, current_tg_id)
 
     # Build a lookup map (db_id → user row) for use in handle_payer
     context.user_data["_payer_options"] = {u["id"]: u for u in all_users}
 
-    await update.message.reply_text(
-        f"Got it: {amount} {currency} = {fmt_sgd(amount_sgd)}\n\nWho paid?",
-        reply_markup=_payer_keyboard(all_users),
-    )
+    last_payer_db_id = context.user_data.get(_KEY_LAST_PAYER_DB_ID)
+    last_payer_name = context.user_data.get(_KEY_LAST_PAYER_NAME)
+
+    if last_payer_db_id:
+        await update.message.reply_text(
+            f"Got it: {amount} {currency} = {fmt_sgd(amount_sgd)}\n\nWho paid?",
+            reply_markup=_payer_shortcut_keyboard(last_payer_name),
+        )
+    else:
+        await update.message.reply_text(
+            f"Got it: {amount} {currency} = {fmt_sgd(amount_sgd)}\n\nWho paid?",
+            reply_markup=_payer_keyboard(all_users),
+        )
     return STATE_PAYER
 
 
@@ -186,9 +241,34 @@ async def handle_payer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     choice = query.data.split(":", 1)[1]
 
     if choice == "cancel":
-        context.user_data.clear()
+        _preserve_last_payer(context)
         await query.edit_message_text("❌ Expense entry cancelled.")
         return ConversationHandler.END
+
+    if choice == "last":
+        payer_db_id = context.user_data.get(_KEY_LAST_PAYER_DB_ID)
+        payer_name = context.user_data.get(_KEY_LAST_PAYER_NAME)
+        if payer_db_id is None:
+            await query.edit_message_text("❌ No previous payer found. Please run /add again.")
+            context.user_data.clear()
+            return ConversationHandler.END
+        context.user_data[KEY_PAYER_DB_ID] = payer_db_id
+        context.user_data[KEY_PAYER_NAME] = payer_name
+        await query.edit_message_text(
+            f"Paid by: *{payer_name}*\n\nSelect a category:",
+            reply_markup=_category_keyboard(),
+            parse_mode="Markdown",
+        )
+        return STATE_CATEGORY
+
+    if choice == "change":
+        payer_options: dict = context.user_data.get("_payer_options", {})
+        all_users = list(payer_options.values())
+        await query.edit_message_text(
+            "Who paid?",
+            reply_markup=_payer_keyboard(all_users),
+        )
+        return STATE_PAYER
 
     if choice == "guest_new":
         await query.edit_message_text(
@@ -205,8 +285,12 @@ async def handle_payer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     else:
         payer_db_id = int(choice)
         payer_options: dict = context.user_data.get("_payer_options", {})
-        user_row = payer_options.get(payer_db_id, {})
-        payer_name = user_row.get("display_name", f"user#{payer_db_id}") if user_row else f"user#{payer_db_id}"
+        if payer_db_id not in payer_options:
+            await query.edit_message_text("❌ Invalid selection. Please run /add again.")
+            context.user_data.clear()
+            return ConversationHandler.END
+        user_row = payer_options[payer_db_id]
+        payer_name = user_row.get("display_name", f"user#{payer_db_id}")
 
     context.user_data[KEY_PAYER_DB_ID] = payer_db_id
     context.user_data[KEY_PAYER_NAME] = payer_name
@@ -323,6 +407,7 @@ async def handle_split_method(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(
         f"{hint}Enter each person's share:\n"
         "Format: `@name1 amount1, @name2 amount2`\n"
+        "Expressions OK: `@alice 100/3, @bob 100/3, @charlie 100/3`\n"
         f"Total must equal {fmt_sgd(context.user_data[KEY_AMOUNT_SGD])}",
         parse_mode="Markdown",
     )
@@ -383,7 +468,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if choice == "no":
         await query.edit_message_text("❌ Expense cancelled.")
-        context.user_data.clear()
+        _preserve_last_payer(context)
         return ConversationHandler.END
 
     group_chat_id = str(update.effective_chat.id)
@@ -394,8 +479,9 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     trip_id = active_trip["id"] if active_trip else None
 
     try:
+        splits = data.get(KEY_CUSTOM_SPLITS, [])
         expense_id = await run_in_executor(
-            queries.insert_expense,
+            queries.insert_expense_with_splits,
             payer_db_id,
             data[KEY_AMOUNT],
             data[KEY_CURRENCY],
@@ -405,28 +491,35 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             data[KEY_DESCRIPTION],
             data[KEY_SPLIT_METHOD],
             group_chat_id,
+            splits,
             trip_id,
         )
 
-        splits = data.get(KEY_CUSTOM_SPLITS, [])
-        if splits:
-            await run_in_executor(queries.insert_expense_splits, expense_id, splits)
-
         cat_label = fmt_category(data[KEY_CATEGORY])
         trip_note = f" · 📍 {active_trip['name']}" if active_trip else ""
+        split_label = "custom split" if data[KEY_SPLIT_METHOD] == "discrete" else "equal split"
         await query.edit_message_text(
-            f"✅ Expense saved!{trip_note}\n({cat_label}) {data[KEY_DESCRIPTION]} -- {fmt_amount(data[KEY_AMOUNT], data[KEY_CURRENCY])}"
+            f"✅ Expense saved!{trip_note}\n"
+            f"({cat_label}) {data[KEY_DESCRIPTION]} -- {fmt_amount(data[KEY_AMOUNT], data[KEY_CURRENCY])}\n"
+            f"Paid by: {data[KEY_PAYER_NAME]} · {split_label}",
+            reply_markup=_post_save_keyboard(),
         )
+        # Remember this payer for next /add
+        last_payer_db_id = data[KEY_PAYER_DB_ID]
+        last_payer_name = data[KEY_PAYER_NAME]
+        context.user_data.clear()
+        context.user_data[_KEY_LAST_PAYER_DB_ID] = last_payer_db_id
+        context.user_data[_KEY_LAST_PAYER_NAME] = last_payer_name
     except Exception as exc:
         logger.error("Failed to save expense: %s", exc)
         await query.edit_message_text("❌ Failed to save expense. Please try again.")
+        _preserve_last_payer(context)
 
-    context.user_data.clear()
     return ConversationHandler.END
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
+    _preserve_last_payer(context)
     await update.message.reply_text("❌ Expense entry cancelled.")
     return ConversationHandler.END
 
@@ -436,13 +529,49 @@ async def handle_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.effective_message.reply_text(
             "⏱️ Expense entry timed out after 5 minutes. Use /add to start again."
         )
-    context.user_data.clear()
+    _preserve_last_payer(context)
     return ConversationHandler.END
+
+
+async def handle_post_add_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point for the 'Add another' button on the post-save keyboard."""
+    query = update.callback_query
+    await query.answer()
+
+    group_chat_id = str(update.effective_chat.id)
+    active_trip = await run_in_executor(queries.get_active_trip, group_chat_id)
+    if not active_trip:
+        await query.message.reply_text(
+            "⛔ No active trip. Use /tripstart <name> [currency] to begin a trip first."
+        )
+        return ConversationHandler.END
+
+    trip_currency = active_trip.get("default_currency", "SGD")
+    last_payer_db_id = context.user_data.get(_KEY_LAST_PAYER_DB_ID)
+    last_payer_name = context.user_data.get(_KEY_LAST_PAYER_NAME)
+    context.user_data.clear()
+    context.user_data["_trip_id"] = active_trip["id"]
+    context.user_data["_trip_currency"] = trip_currency
+    if last_payer_db_id:
+        context.user_data[_KEY_LAST_PAYER_DB_ID] = last_payer_db_id
+        context.user_data[_KEY_LAST_PAYER_NAME] = last_payer_name
+
+    await query.message.reply_text(
+        f"💸 Trip: *{active_trip['name']}*\n\n"
+        f"How much did you spend? (e.g. `50 USD`, `30 {trip_currency}`, `5000 JPY`)\n"
+        f"Currency defaults to {trip_currency} if omitted.\n\n"
+        "Send /cancel to abort.",
+        parse_mode="Markdown",
+    )
+    return STATE_AMOUNT
 
 
 def build_add_handler() -> ConversationHandler:
     return ConversationHandler(
-        entry_points=[CommandHandler("add", cmd_add)],
+        entry_points=[
+            CommandHandler("add", cmd_add),
+            CallbackQueryHandler(handle_post_add_entry, pattern=r"^post_add:add_another$"),
+        ],
         states={
             STATE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount)],
             STATE_PAYER: [CallbackQueryHandler(handle_payer, pattern=r"^payer:")],

@@ -141,17 +141,11 @@ async def cmd_settle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
             return ConversationHandler.END
 
-        # Validate that the recipient is actually someone this sender owes
-        all_transfers = simplify_debts(net)
-        valid_recipients = {t: a for f, t, a in all_transfers if f == from_user_id}
-        if to_user_id not in valid_recipients:
-            names = balance_data["users"]
-            valid_names = ", ".join(
-                f"@{names.get(tid, str(tid))}" for tid in valid_recipients
-            )
+        # Validate that the recipient has a positive net (is actually owed money)
+        recipient_net = net.get(to_user_id, 0.0)
+        if recipient_net <= 0.01:
             await update.message.reply_text(
-                f"❌ You don't owe @{to_user['display_name']} in this trip.\n"
-                f"You should settle with: {valid_names or 'nobody (all clear!)'}.\n"
+                f"❌ @{to_user['display_name']} is not owed any money in this trip.\n"
                 f"Use /settle to pick interactively."
             )
             return ConversationHandler.END
