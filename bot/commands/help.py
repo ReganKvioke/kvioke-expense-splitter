@@ -8,7 +8,7 @@ _HELP_USER = (
     "🤖 *KviokeExpenseSplitter*\n\n"
     "*Expenses*\n"
     "/add — Log a shared expense \\(guided flow\\)\n"
-    "/quickadd `[@payer] <amount> [currency] <category> <desc>` — One-line expense, equal split\n"
+    "/quickadd `[@payer] <amount> [currency] [category] <desc>` — One-line expense, equal split\n"
     "/undo — Remove the last expense\n"
     "/edit — Edit description or category\n"
     "/delete — Delete an expense\n\n"

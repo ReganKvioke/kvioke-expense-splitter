@@ -1,4 +1,4 @@
-"""Two-step /delete command: list recent expenses → confirm → delete."""
+"""Multi-select /delete command: list expenses → toggle selections → confirm → bulk delete."""
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -22,14 +22,17 @@ STATE_PICK, STATE_CONFIRM = range(2)
 PAGE_SIZE = 8
 
 
-def _expense_list_keyboard(expenses: list, page: int, total: int, currency: str = "SGD") -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(
-            f"{fmt_datetime_local(e['created_at'], currency)} · {e['description'][:20]} · {fmt_amount(e['amount'], e['currency'])} · {e['paid_by_name']}",
-            callback_data=f"del_pick:{e['id']}",
-        )]
-        for e in expenses
-    ]
+def _expense_list_keyboard(
+    expenses: list, page: int, total: int, selected: set, currency: str = "SGD"
+) -> InlineKeyboardMarkup:
+    buttons = []
+    for e in expenses:
+        check = "✅" if e["id"] in selected else "☐"
+        label = (
+            f"{check} {fmt_datetime_local(e['created_at'], currency)} · "
+            f"{e['description'][:20]} · {fmt_amount(e['amount'], e['currency'])} · {e['paid_by_name']}"
+        )
+        buttons.append([InlineKeyboardButton(label, callback_data=f"del_toggle:{e['id']}")])
 
     nav = []
     if page > 0:
@@ -39,14 +42,21 @@ def _expense_list_keyboard(expenses: list, page: int, total: int, currency: str 
     if nav:
         buttons.append(nav)
 
-    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="del_cancel")])
+    action_row = []
+    if selected:
+        action_row.append(
+            InlineKeyboardButton(f"🗑 Delete ({len(selected)})", callback_data="del_delete_selected")
+        )
+    action_row.append(InlineKeyboardButton("❌ Cancel", callback_data="del_cancel"))
+    buttons.append(action_row)
+
     return InlineKeyboardMarkup(buttons)
 
 
-def _confirm_keyboard(expense_id: int) -> InlineKeyboardMarkup:
+def _confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🗑 Yes, delete", callback_data=f"del_confirm:{expense_id}"),
+            InlineKeyboardButton("🗑 Yes, delete all", callback_data="del_confirm"),
             InlineKeyboardButton("◀ Back", callback_data="del_back"),
         ]
     ])
@@ -71,14 +81,17 @@ async def _show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, page: i
     context.user_data["del_all"] = all_expenses
     context.user_data["del_page"] = page
 
+    selected: set = context.user_data.get("del_selected", set())
     trip_name = context.user_data.get("del_trip_name", "")
     currency = context.user_data.get("del_currency", "SGD")
     slice_ = all_expenses[page * PAGE_SIZE: (page + 1) * PAGE_SIZE]
+
+    sel_info = f" · {len(selected)} selected" if selected else ""
     text = (
-        f"🗑 *{trip_name}* — Select an expense to delete "
+        f"🗑 *{trip_name}* — Tap to select/deselect{sel_info} "
         f"({page * PAGE_SIZE + 1}–{page * PAGE_SIZE + len(slice_)} of {len(all_expenses)}):"
     )
-    keyboard = _expense_list_keyboard(slice_, page, len(all_expenses), currency)
+    keyboard = _expense_list_keyboard(slice_, page, len(all_expenses), selected, currency)
 
     if edit:
         await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
@@ -102,6 +115,7 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data["del_trip_id"] = None
         context.user_data["del_trip_name"] = "All expenses"
         context.user_data["del_currency"] = "SGD"
+    context.user_data["del_selected"] = set()
     return await _show_list(update, context, page=0, edit=False)
 
 
@@ -112,33 +126,52 @@ async def handle_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return await _show_list(update, context, page=page, edit=True)
 
 
-async def handle_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def handle_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+
+    expense_id = int(query.data.split(":", 1)[1])
+    selected: set = context.user_data.get("del_selected", set())
+
+    if expense_id in selected:
+        selected.discard(expense_id)
+        await query.answer("Deselected")
+    else:
+        selected.add(expense_id)
+        await query.answer("Selected")
+
+    context.user_data["del_selected"] = selected
+    page = context.user_data.get("del_page", 0)
+    return await _show_list(update, context, page=page, edit=True)
+
+
+async def handle_delete_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
 
-    expense_id = int(query.data.split(":", 1)[1])
-    group_chat_id = str(update.effective_chat.id)
+    selected: set = context.user_data.get("del_selected", set())
+    if not selected:
+        await query.answer("No expenses selected.", show_alert=True)
+        return STATE_PICK
 
-    expense = await run_in_executor(queries.get_expense_by_id, expense_id, group_chat_id)
-
-    if not expense:
-        await query.edit_message_text("❌ Expense not found.")
-        return ConversationHandler.END
-
-    context.user_data["del_expense"] = expense
-
+    all_expenses = context.user_data.get("del_all", [])
+    expense_map = {e["id"]: e for e in all_expenses}
     currency = context.user_data.get("del_currency", "SGD")
+
+    lines = []
+    for eid in sorted(selected):
+        e = expense_map.get(eid)
+        if e:
+            lines.append(
+                f"• {fmt_datetime_full_local(e['created_at'], currency)} — "
+                f"{e['description']} — {fmt_amount(e['amount'], e['currency'])} ({e['paid_by_name']})"
+            )
+
     text = (
-        "⚠️ *Confirm deletion:*\n\n"
-        f"Date: {fmt_datetime_full_local(expense['created_at'], currency)}\n"
-        f"Description: {expense['description']}\n"
-        f"Amount: {fmt_amount(expense['amount'], expense['currency'])} ({fmt_sgd(expense['amount_sgd'])})\n"
-        f"Category: {fmt_category(expense['category'])}\n"
-        f"Paid by: {expense['paid_by_name']}\n"
-        f"Split: {expense['split_method']}\n\n"
-        "This will also remove all associated splits. This cannot be undone."
+        f"⚠️ *Confirm deletion of {len(selected)} expense(s):*\n\n"
+        + "\n".join(lines)
+        + "\n\nThis will also remove all associated splits. This cannot be undone."
     )
-    await query.edit_message_text(text, reply_markup=_confirm_keyboard(expense_id), parse_mode="Markdown")
+    await query.edit_message_text(text, reply_markup=_confirm_keyboard(), parse_mode="Markdown")
     return STATE_CONFIRM
 
 
@@ -146,24 +179,28 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     await query.answer()
 
-    expense_id = int(query.data.split(":", 1)[1])
+    selected: set = context.user_data.get("del_selected", set())
     group_chat_id = str(update.effective_chat.id)
 
-    try:
-        deleted = await run_in_executor(queries.delete_expense, expense_id, group_chat_id)
-    except Exception as exc:
-        logger.error("Failed to delete expense %s: %s", expense_id, exc)
-        await query.edit_message_text("❌ Failed to delete expense. Please try again.")
-        return ConversationHandler.END
+    deleted_count = 0
+    failed_count = 0
+    for expense_id in selected:
+        try:
+            deleted = await run_in_executor(queries.delete_expense, expense_id, group_chat_id)
+            if deleted:
+                deleted_count += 1
+            else:
+                failed_count += 1
+        except Exception as exc:
+            logger.error("Failed to delete expense %s: %s", expense_id, exc)
+            failed_count += 1
 
-    expense = context.user_data.get("del_expense", {})
-    if deleted:
+    if failed_count:
         await query.edit_message_text(
-            f"✅ Deleted: *{expense.get('description', '')}* — {fmt_amount(expense.get('amount', 0), expense.get('currency', 'SGD'))}",
-            parse_mode="Markdown",
+            f"⚠️ Deleted {deleted_count} expense(s). {failed_count} could not be deleted."
         )
     else:
-        await query.edit_message_text("❌ Expense not found or already deleted.")
+        await query.edit_message_text(f"✅ Deleted {deleted_count} expense(s).")
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -185,7 +222,7 @@ async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 async def handle_unexpected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Please use the buttons above to select an expense.")
+    await update.message.reply_text("Please use the buttons above to select expenses.")
     return None  # Stay in current state
 
 
@@ -195,11 +232,12 @@ def build_delete_handler() -> ConversationHandler:
         states={
             STATE_PICK: [
                 CallbackQueryHandler(handle_page, pattern=r"^del_page:"),
-                CallbackQueryHandler(handle_pick, pattern=r"^del_pick:"),
+                CallbackQueryHandler(handle_toggle, pattern=r"^del_toggle:"),
+                CallbackQueryHandler(handle_delete_selected, pattern=r"^del_delete_selected$"),
                 CallbackQueryHandler(handle_cancel, pattern=r"^del_cancel$"),
             ],
             STATE_CONFIRM: [
-                CallbackQueryHandler(handle_confirm, pattern=r"^del_confirm:"),
+                CallbackQueryHandler(handle_confirm, pattern=r"^del_confirm$"),
                 CallbackQueryHandler(handle_back, pattern=r"^del_back$"),
                 CallbackQueryHandler(handle_cancel, pattern=r"^del_cancel$"),
             ],

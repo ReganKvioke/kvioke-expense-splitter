@@ -26,18 +26,20 @@ from bot.db.database import run_in_executor
 from bot.middleware.auth import require_auth
 from bot.services.currency import convert_to_sgd
 from bot.services.splitting import equal_split
-from bot.utils.constants import CATEGORIES, SUPPORTED_CURRENCIES
+from bot.utils.constants import CATEGORIES, SUPPORTED_CURRENCIES, infer_category
 from bot.utils.format import fmt_amount, fmt_category
 
 logger = logging.getLogger(__name__)
 
 _USAGE = (
-    "Usage: /quickadd [@payer] <amount> [currency] <category> <description>\n\n"
+    "Usage: /quickadd [@payer] <amount> [currency] [category] <description>\n\n"
     "Examples:\n"
-    "  /quickadd 50 food lunch at hawker\n"
-    "  /quickadd 50 USD food lunch at hawker\n"
+    "  /quickadd 50 lunch at hawker          (category auto-detected: food)\n"
+    "  /quickadd 50 food lunch at hawker     (category explicit)\n"
+    "  /quickadd 50 USD grab to airport      (category auto-detected: transport)\n"
     "  /quickadd @Brandeline 50 USD food lunch at hawker\n\n"
-    f"Categories: {', '.join(CATEGORIES)}"
+    f"Explicit categories: {', '.join(CATEGORIES)}\n"
+    "Tip: Skip the category — it'll be inferred from your description."
 )
 
 
@@ -81,17 +83,17 @@ def _parse_args(tokens: list[str]) -> dict | None:
     if idx >= len(tokens):
         return None
 
-    # Category
+    # Category — explicit match or inferred from description
     cat_token = tokens[idx].lower()
-    if cat_token not in CATEGORIES:
-        return None
-    category = cat_token
-    idx += 1
-
-    # Description (everything remaining)
-    if idx >= len(tokens):
-        return None
-    description = " ".join(tokens[idx:])
+    if cat_token in CATEGORIES:
+        category = cat_token
+        idx += 1
+        if idx >= len(tokens):
+            return None
+        description = " ".join(tokens[idx:])
+    else:
+        description = " ".join(tokens[idx:])
+        category = infer_category(description)
 
     return {
         "payer_name": payer_name,
@@ -116,22 +118,7 @@ async def cmd_quickadd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     sender = update.effective_user
     sender_display = sender.username or sender.first_name or str(sender.id)
 
-    # Resolve payer
-    if parsed["payer_name"] is None:
-        payer_db_id = await run_in_executor(queries.upsert_user, str(sender.id), sender_display)
-        payer_display = sender_display
-    else:
-        target = await run_in_executor(queries.get_user_by_username, parsed["payer_name"])
-        if target is None:
-            await update.message.reply_text(
-                f"❌ Unknown user @{parsed['payer_name']}. "
-                "They must have used the bot at least once in this group."
-            )
-            return
-        payer_db_id = target["id"]
-        payer_display = target["display_name"]
-
-    # Require an active trip
+    # Require an active trip (needed for alias resolution)
     active_trip = await run_in_executor(queries.get_active_trip, group_chat_id)
     if not active_trip:
         await update.message.reply_text(
@@ -144,6 +131,29 @@ async def cmd_quickadd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         parsed["currency"] = active_trip["default_currency"]
 
     trip_id = active_trip["id"]
+
+    # Resolve payer — check trip aliases first, then fall back to global display_name
+    if parsed["payer_name"] is None:
+        payer_db_id = await run_in_executor(queries.upsert_user, str(sender.id), sender_display)
+        payer_display = sender_display
+    else:
+        name_lower = parsed["payer_name"].lower()
+        trip_participants = await run_in_executor(queries.get_trip_participants, trip_id)
+        target = next(
+            (u for u in trip_participants if u["display_name"].lower() == name_lower),
+            None,
+        )
+        if target is None:
+            # Fall back to global username match
+            target = await run_in_executor(queries.get_user_by_username, parsed["payer_name"])
+        if target is None:
+            await update.message.reply_text(
+                f"❌ Unknown user @{parsed['payer_name']}. "
+                "They must have used the bot at least once in this group."
+            )
+            return
+        payer_db_id = target["id"]
+        payer_display = target["display_name"]
 
     # Currency conversion
     amount_sgd, exchange_rate = await convert_to_sgd(parsed["amount"], parsed["currency"])
