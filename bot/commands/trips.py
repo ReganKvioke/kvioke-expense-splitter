@@ -351,6 +351,13 @@ async def cmd_tripstart_cancel(update: Update, context: ContextTypes.DEFAULT_TYP
 @require_auth
 async def cmd_tripjoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/tripjoin — Join the currently active trip in this group."""
+    if update.effective_chat.type == "private":
+        await update.message.reply_text(
+            "⚠️ /tripjoin only works in a group chat.\n\n"
+            "Please send this command in the Telegram group where the trip was started."
+        )
+        return
+
     group_chat_id = str(update.effective_chat.id)
     active_trip = await run_in_executor(queries.get_active_trip, group_chat_id)
     if not active_trip:

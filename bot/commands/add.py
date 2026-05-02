@@ -146,8 +146,15 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     group_chat_id = str(update.effective_chat.id)
     active_trip = await run_in_executor(queries.get_active_trip, group_chat_id)
     if not active_trip:
+        private_hint = (
+            "\n\n💡 *Tip:* You're in a private chat. Trip commands only work in the group chat — "
+            "please send this command there."
+            if update.effective_chat.type == "private"
+            else ""
+        )
         await update.message.reply_text(
-            "⛔ No active trip. Use /tripstart <name> [currency] to begin a trip first."
+            f"⛔ No active trip. Use /tripstart <name> [currency] to begin a trip first.{private_hint}",
+            parse_mode="Markdown",
         )
         return ConversationHandler.END
 

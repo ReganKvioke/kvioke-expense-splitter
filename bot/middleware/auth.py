@@ -106,9 +106,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await loop.run_in_executor(None, queries.add_trip_participants, active_trip["id"], [user_db_id])
             trip_join_msg = f"\n\n📍 You've been added to the active trip *{active_trip['name']}*!"
 
+    group_hint = (
+        "\n\n💡 *Tip:* To log expenses, go to your group chat and use /tripjoin to join the active trip."
+        if chat.type == "private"
+        else ""
+    )
     await update.message.reply_text(
         f"✅ Access granted! Welcome, {user.first_name}!\n"
-        f"Use /help to see available commands.{trip_join_msg}",
+        f"Use /help to see available commands.{trip_join_msg}{group_hint}",
         parse_mode="Markdown",
     )
 
